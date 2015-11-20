@@ -1,0 +1,20 @@
+{
+  "name": "node-bury",
+  "version": "1.0.0",
+  "description": "A steganographic and cryptographic library for nodejs.",
+  "main": "bury.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "Cryptography",
+    "Steganography"
+  ],
+  "author": "J. Ian Lindsay",
+  "license": "ISC",
+  "dependencies": {
+    "compressjs": "^1.0.3",
+    "mcrypt": "^0.1.9",
+    "node-gd": "^1.1.0"
+  }
+}
