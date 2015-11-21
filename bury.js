@@ -204,46 +204,46 @@ function Bury(carrier_path, password, options) {
   *  Regenerates strides.
   */
   var rescale_carrier = function() {
-    // $return_value  = false;
-    // $bits  = __payload_size * 8;
-    // $ratio  = max(__x, __y) / min(__x, __y);
-    // $required_pixels  = __offset;
-    // $bpp = $this->getBitsPerPixel();  // How many bits-per-pixel can we have?
-    // $n  = 0;
-    // while (($bits > 0) && (isset(__strides[$n]))) {
-    //   $required_pixels  += __strides[$n++];
-    //   $bits  = $bits - $bpp;
-    // }
-    // log_error('Need a total of '.$required_pixels.' pixels to store the given message with given password.');
-    //
-    // $n  = ceil(sqrt($required_pixels / $ratio));
-    // $width  = $n;
-    // $height  = $n;
-    // if (__x >= __y) $width = ceil($width * $ratio);
-    // else $height = ceil($height * $ratio);
-    //
-    // $img  = imagecreatetruecolor($width, $height);
-    // if ($img) {
-    //   if (imagecopyresized($img, __image, 0, 0, 0, 0, $width, $height, __x, __y)) {
-    //     if (($height * $width) < (__x * __y)) {    // Did we actually shrink the carrier?
-    //       if (($height * $width) >= $required_pixels) {    // Do we have enough space in the new carrier?
-    //         imagedestroy(__image);
-    //         __image  = $img;
-    //         __x  = imagesx($img);
-    //         __y  = imagesy($img);
-    //         log_error('Scaled carrier into minimum required size for the given password: ('.__x.', '.__y.').', LOG_INFO);
-    //         __strides  = array();  // We will need to truncate the stride array because our image has shrunk.
-    //         $this->demarcate_strides();
-    //       }
-    //       else log_error('Somehow we scaled the carrier and now it doesn\'t have enough space. Using the original carrier...', LOG_WARNING);
-    //     }
-    //     else log_error('Somehow we scaled the carrier and it got larger. Using the original carrier...', LOG_WARNING);
-    //     $return_value  = true;
-    //   }
-    //   else log_error('Failed to scale the carrier.', LOG_ERR);
-    // }
-    // else log_error('Failed to create the scaled carrier..', LOG_ERR);
-    // return $return_value;
+    var return_value  = false;
+    var bits  = __payload_size * 8;
+    var ratio  = max(__x, __y) / min(__x, __y);
+    var required_pixels  = __offset;
+    var bpp = getBitsPerPixel();  // How many bits-per-pixel can we have?
+    var n  = 0;
+    while ((bits > 0) && (isset(__strides[n]))) {
+      required_pixels  += __strides[n++];
+      bits  = bits - bpp;
+    }
+    log_error('Need a total of ' + required_pixels + ' pixels to store the given message with given password.');
+
+    n  = ceil(sqrt(required_pixels / ratio));
+    var width  = n;
+    var height  = n;
+    if (__x >= __y) width = ceil(width * ratio);
+    else height = ceil(height * ratio);
+
+    var img  = gd.createTrueColorSync(width, height);
+    if (img) {
+      if (img.copyResized(__image, 0, 0, 0, 0, width, height, __x, __y)) {
+        if ((height * width) < (__x * __y)) {    // Did we actually shrink the carrier?
+          if ((height * width) >= required_pixels) {    // Do we have enough space in the new carrier?
+            __image.destroy();
+            __image  = img;
+            __x  = img.width();
+            __y  = img.height();
+            log_error('Scaled carrier into minimum required size for the given password: (' + __x + ', ' + __y + ').', LOG_INFO);
+            __strides  = [];  // We will need to truncate the stride array because our image has shrunk.
+            demarcate_strides();
+          }
+          else log_error('Somehow we scaled the carrier and now it doesn\'t have enough space. Using the original carrier...', LOG_WARNING);
+        }
+        else log_error('Somehow we scaled the carrier and it got larger. Using the original carrier...', LOG_WARNING);
+        return_value  = true;
+      }
+      else log_error('Failed to scale the carrier.', LOG_ERR);
+    }
+    else log_error('Failed to create the scaled carrier..', LOG_ERR);
+    return return_value;
   }
 
 
@@ -276,7 +276,7 @@ function Bury(carrier_path, password, options) {
     }
     return byte_array;
   }
-  
+
   /**
   * Given the password, derive the following parameters....
   *  0) Offset (in pixels)
@@ -295,7 +295,7 @@ function Bury(carrier_path, password, options) {
     var hash      = CryptoJS.SHA256(pw);      // Give us back 32 bytes.
     var hash_arr  = toByteArray(hash.words);  // Need to access it byte-wise...
     __offset      = hash_arr[0];              // Where does the first header byte go?
-    
+
     // How many hash rounds should we run on the password? Limit it to 9000. We don't want to go over 9000.
     var rounds    = ((hash_arr[1] * 256) + hash_arr[2]) % 9000;
     __max_stride  = 2+(hash_arr[3] % 14);  // The maximum stride.
@@ -417,7 +417,7 @@ function Bury(carrier_path, password, options) {
     //
     var nu_iv      = generateIv();
     __iv_size = 128;  // TODO: ????
-    
+
     var compressed = (compress) ? bzip2.compressFile(__plaintext, 9) : __plaintext;
     //var encrypted  = nu_iv+ mcrypt_encrypt(CIPHER, $this->key, $compressed, BLOCK_MODE, $nu_iv);
     //
@@ -447,62 +447,62 @@ function Bury(carrier_path, password, options) {
   *  Embed the header and ciphertext into the carrier.
   */
   var modulate = function() {
-    // $this->set_channel_spec();    // Record the channels in use.
-    //
-    // __  = 0;
-    // $initial  = __offset + __strides[0];  // The offset stores the active channel settings.
-    //
-    // log_error('Initial pixel of modulation: ('.$this->get_x_coords_by_linear($initial).', '.$this->get_y_coords_by_linear($initial).') (x, y).');
-    //
-    // // Visit each usable pixel and modulate it.
-    // $abs_pix  = __offset;
-    // for ($n = 0; $n < count(__strides); $n++) {
-    //   $abs_pix  = $abs_pix + __strides[$n];
-    //   $i  = $this->get_x_coords_by_linear($abs_pix);
-    //   $j  = $this->get_y_coords_by_linear($abs_pix);
-    //
-    //   $temp  = imagecolorat(__image, $i, $j);
-    //
-    //   $red  = ($temp >> 16) & 0xFF;
-    //   $green  = ($temp >> 8) & 0xFF;
-    //   $blue  = ($temp) & 0xFF;
-    //
-    //   if (visible_result) {
-    //     if (enableRed)    $bit    = getBit();
-    //     if (enableBlue)   $bit    = getBit();
-    //     if (enableGreen)  $bit    = getBit();
-    //
-    //     if ($bit === false) {
-    //       $red = 0x00;
-    //       $blue = 0x00;
-    //       $green  = 0xff;
-    //     }
-    //     else {
-    //       $green = 0x00;
-    //       $blue = 0x00;
-    //       $red  = 0xff;
-    //     }
-    //   }
-    //   else {
-    //     if (enableRed) {
-    //       $bit    = getBit();
-    //       if ($bit !== FALSE) $red  = ($red & 0xFE) + $bit;
-    //     }
-    //
-    //     if (enableBlue) {
-    //       $bit    = getBit();
-    //       if ($bit !== FALSE) $blue  = ($blue & 0xFE) + $bit;
-    //     }
-    //
-    //     if (enableGreen) {
-    //       $bit    = getBit();
-    //       if ($bit !== FALSE) $green  = ($green & 0xFE) + $bit;
-    //     }
-    //   }
-    //   imagesetpixel(__image, $i, $j, imagecolorallocate(__image, $red, $green, $blue));
-    // }
-    //
-    // return true;
+    set_channel_spec();    // Record the channels in use.
+    __bit_cursor  = 0;
+    var initial  = __offset + __strides[0];  // The offset stores the active channel settings.
+
+    log_error('Initial pixel of modulation: (' + get_x_coords_by_linear(initial) + ', ' + get_y_coords_by_linear(initial) + ') (x, y).');
+
+    // Visit each usable pixel and modulate it.
+    var abs_pix  = __offset;
+    for (var n = 0; n < __strides.length; n++) {
+      var abs_pix  = abs_pix + __strides[n];
+      var i  = get_x_coords_by_linear(abs_pix);
+      var j  = get_y_coords_by_linear(abs_pix);
+
+      var temp  = __image.colorAt(i, j);
+
+      var red    = (temp >> 16) & 0xFF;
+      var green  = (temp >> 8) & 0xFF;
+      var blue   = (temp) & 0xFF;
+
+      var bit;
+
+      if (visible_result) {
+         if (enableRed)    bit = getBit();
+         if (enableBlue)   bit = getBit();
+         if (enableGreen)  bit = getBit();
+
+         if (bit === false) {
+           red = 0x00;
+           blue = 0x00;
+           green  = 0xff;
+         }
+         else {
+           green = 0x00;
+           blue = 0x00;
+           red  = 0xff;
+         }
+       }
+      else {
+        if (enableRed) {
+          bit    = getBit();
+          if (bit !== FALSE) red  = (red & 0xFE) + bit;
+        }
+
+        if (enableBlue) {
+          bit    = getBit();
+          if (bit !== FALSE) blue  = (blue & 0xFE) + bit;
+        }
+
+        if (enableGreen) {
+          bit    = getBit();
+          if (bit !== FALSE) green  = (green & 0xFE) + bit;
+        }
+      }
+      __image.setPixel(i, j, __image.colorAllocate(red, green, blue));
+    }
+    return true;
   }
 
 
@@ -653,6 +653,13 @@ function Bury(carrier_path, password, options) {
     // }
   }
 
+  /*
+  * Thanks, Eli...
+  * http://stackoverflow.com/questions/2128157/javascript-equivalent-to-c-strncmp-compare-string-for-length
+  */
+  function strncmp(a, b, n){
+    return a.substring(0, n) == b.substring(0, n);
+  }
 
   /**
   * The last 16 bytes of the ciphertext will be a checksum for the encrypted message.
@@ -661,12 +668,11 @@ function Bury(carrier_path, password, options) {
   *  False otherwise.
   */
   var verify_checksum = function() {
-    //$msg  = substr($this->ciphertext, 0, __payload_size-16);
-    //$chksum  = substr($this->ciphertext, __payload_size-16);
-    //$hash  = hash('md5', $msg, true);
-    //$this->ciphertext  = $msg;
-    //if (strncmp($chksum, $hash, 16) == 0) return true;
-    return false;
+    var msg     = __ciphertext.substr(0, __payload_size-16);
+    var chksum  = __ciphertext.substr(__payload_size-16);
+    var hash    = CipherJS.MD5(msg);
+    __ciphertext  = msg;
+    return (!strncmp(chksum, hash, 16));
   }
 
   /**
@@ -822,7 +828,7 @@ function Bury(carrier_path, password, options) {
     __image = false;
   }
 
-  
+
 
   if (password.length < MIN_PASS_LENGTH) {
     console.log('Password is too short. You must supply a password with at least ' + MIN_PASS_LENGTH + ' characters.');
@@ -830,7 +836,7 @@ function Bury(carrier_path, password, options) {
   else {
     deriveParamsFromKey(password);
   }
-  
+
   /**
   * Try to load the carrier file specified by the argument.
   *  Returns true on success and false on failure.
