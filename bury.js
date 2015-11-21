@@ -145,6 +145,9 @@ function Bury(carrier_path, password, options) {
     var __strides      = [];    // Count off the intervals between pixels.
     var __usablePixels = 0;     // How many pixels are we capable of using?
 
+  // Holds the filename if setMessage() is called with a path.
+  var __file_name_info  = false;
+
 
   var max_payload_size = -1;  // Used to decide how much plaintext we can stuff into the carrier.
   var payload_size     = -1;  // The size of the message after encryption and compression
@@ -168,9 +171,12 @@ function Bury(carrier_path, password, options) {
     // DEBUG OPTION    How noisy should this class be about what it's doing?
     var verbosity       = options.hasOwnProperty('verbosity')      ? options.verbosity         : LOG_DEBUG;
 
-//store_filename  // If the user sets this to false, we will not store file information.
-//write_file  // Decrypt only: Should we write an output file, if applicable?
-//file_name_info  // Holds the filename if setMessage() is called with a path.
+  /* These options apply to treatment of filenames for embedded files. */
+    // If the user sets this to false, we will not store file information.
+    var store_filename  = options.hasOwnProperty('storeFilename')  ? options.storeFilename     : true;
+
+    // Decrypt only: Should we write an output file, if applicable?
+    var write_file      = options.hasOwnProperty('writeFile')      ? options.writeFile         : true;
 
   // Crush the message prior to encrypting?
   var compress        = options.hasOwnProperty('compress')       ? options.compress          : true;
@@ -406,16 +412,16 @@ function Bury(carrier_path, password, options) {
   */
   var encrypt = function() {
     var return_value  = true;
-    // $message_params  = 0x00;
-    //
-    // if ($this->store_filename) {
-    //   if (strlen($this->file_name_info) != 32) {
-    //     log_error('Filename was not 32 bytes. storing it generically...', LOG_WARNING);
-    //     $this->file_name_info  = '                bad_filename.txt';
-    //   }
-    //   $this->plaintext  = $this->file_name_info.$this->plaintext;
-    // }
-    //
+    var message_params  = 0x00;
+
+    if (store_filename) {
+      if (strlen(__file_name_info) != 32) {
+        log_error('Filename was not 32 bytes. storing it generically...', LOG_WARNING);
+        __file_name_info  = '                bad_filename.txt';
+      }
+      __plaintext  = __file_name_info + __plaintext;
+    }
+
     var nu_iv      = generateIv();
     __iv_size = 128;  // TODO: ????
 
@@ -438,7 +444,7 @@ function Bury(carrier_path, password, options) {
     //   log_error('Compressed '.$pt_len.' bytes into '.$comp_len.'.', LOG_INFO);
     // }
     // if ($this->store_filename) {
-    //   log_error('Prepended filename to plaintext: '.$this->file_name_info, LOG_INFO);
+    //   log_error('Prepended filename to plaintext: '.__file_name_info, LOG_INFO);
     // }
     return return_value;
   }
@@ -570,11 +576,11 @@ function Bury(carrier_path, password, options) {
     // $ct     = substr($this->ciphertext, $this->iv_size, __payload_size-$this->iv_size);
     // $decrypted    = mcrypt_decrypt(CIPHER, $this->key, $ct, BLOCK_MODE, $nu_iv);
     // $decompressed  = (compress) ? bzdecompress($decrypted) : $decrypted;
-    // $this->file_name_info  = trim(($this->store_filename) ? substr($decompressed, 0, 32) : '');
+    // __file_name_info  = trim(($this->store_filename) ? substr($decompressed, 0, 32) : '');
     // $this->plaintext  = trim(($this->store_filename) ? substr($decompressed, 32) : $decompressed);
     //
     // if (compress) log_error('Compression inflated '.strlen($decrypted).' bytes into '.strlen($decompressed).' bytes.', LOG_INFO);
-    // if ($this->store_filename) log_error('Retrieved file name: '.$this->file_name_info, LOG_INFO);
+    // if ($this->store_filename) log_error('Retrieved file name: '.__file_name_info, LOG_INFO);
     // return $return_value;
   }
 
@@ -713,8 +719,8 @@ function Bury(carrier_path, password, options) {
     //           if ($name_override) $message  = $name_override;    // Facilitates HTML forms.
     //
     //           $base  = basename($message);
-    //           $this->file_name_info  = $this->normalize_filename($base);
-    //           log_error('Will use filename: '.$this->file_name_info, LOG_INFO);
+    //           __file_name_info  = $this->normalize_filename($base);
+    //           log_error('Will use filename: '.__file_name_info, LOG_INFO);
     //         }
     //         log_error('Loaded '.strlen($this->plaintext).' raw message bytes from file.', LOG_INFO);
     //       }
@@ -818,7 +824,7 @@ function Bury(carrier_path, password, options) {
   * Return the filename.
   */
   this.filename = function() {
-    //return $this->file_name_info;
+    //return __file_name_info;
   }
 
   /**
