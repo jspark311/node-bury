@@ -106,6 +106,7 @@
 * ============================================================================================================================
 */
 'use strict'
+var fs         = require('fs');           // File i/o
 var gd         = require('node-gd');      // Image manipulation library.
 var MCrypt     = require('mcrypt');       // Cryptograhy
 var compressjs = require('compressjs');   // Compression library.
@@ -583,53 +584,53 @@ function Bury(carrier_path, password, options) {
   */
   var demodulate = function() {
     get_channel_spec();
-    // $all_bytes  = array(0x00);
+    var all_bytes  = [0x00];
     var byte  = 0;
     var bit   = 0;
-    //
-    // $initial  = __offset + __strides[0];  // The offset stores the active channel settings.
-    // log_error('Initial pixel of demodulation: ('.$this->get_x_coords_by_linear($initial).', '.$this->get_y_coords_by_linear($initial).') (x, y).');
-    //
-    // // Visit each usable pixel and demodulate it.
-    // $abs_pix  = __offset;
-    // for ($n = 0; $n < count(__strides); $n++) {
-    //   $abs_pix  = $abs_pix + __strides[$n];
-    //   $i  = $this->get_x_coords_by_linear($abs_pix);
-    //   $j  = $this->get_y_coords_by_linear($abs_pix);
-    //
-    //   $temp  = imagecolorat(__image, $i, $j);
-    //
-    //   if (enableRed) {
-    //     $all_bytes[$byte]  = ($all_bytes[$byte] >> 1) + ((($temp >> 16) & 0x01) << 7);
-    //     $bit++;
-    //     if ($bit % 8 == 0)  $all_bytes[++$byte] = 0x00;
-    //   }
-    //
-    //   if (enableBlue) {
-    //     $all_bytes[$byte]  = ($all_bytes[$byte] >> 1) + ((($temp) & 0x01) << 7);
-    //     $bit++;
-    //     if ($bit % 8 == 0) $all_bytes[++$byte] = 0x00;
-    //   }
-    //
-    //   if (enableGreen) {
-    //     $all_bytes[$byte]  = ($all_bytes[$byte] >> 1) + ((($temp >> 8) & 0x01) << 7);
-    //     $bit++;
-    //     if ($bit % 8 == 0) $all_bytes[++$byte] = 0x00;
-    //   }
-    // }
-    //
-    // // This function call makes a choice about the data we just read,
-    // //  and unifies the channels into a single coherrant bit-stream, or
-    // //  it errors.
-    // if ($this->decodeHeader(implode(array_map("chr", $all_bytes)))) {
-    //   if ($this->verify_checksum()) {
-    //     log_error('Message passed checksum.', LOG_INFO);
-    //     return true;
-    //   }
-    //   else log_error('Message failed checksum.', LOG_ERR);
-    // }
-    // else log_error(__METHOD__.'Failed to decode the header.', LOG_ERR);
-    // return false;
+
+    var initial  = __offset + __strides[0];  // The offset stores the active channel settings.
+    log_error('Initial pixel of demodulation: ('+get_x_coords_by_linear(initial)+', '+get_y_coords_by_linear(initial)+') (x, y).');
+
+    // Visit each usable pixel and demodulate it.
+    var abs_pix  = __offset;
+    for (n = 0; n < count(__strides); n++) {
+      abs_pix  = abs_pix + __strides[n];
+      i  = get_x_coords_by_linear(abs_pix);
+      j  = get_y_coords_by_linear(abs_pix);
+
+      temp  = imagecolorat(__image, i, j);
+
+      if (enableRed) {
+        all_bytes[byte]  = (all_bytes[byte] >> 1) + (((temp >> 16) & 0x01) << 7);
+        bit++;
+        if (bit % 8 == 0)  all_bytes[++byte] = 0x00;
+      }
+
+      if (enableBlue) {
+        all_bytes[byte]  = (all_bytes[byte] >> 1) + (((temp) & 0x01) << 7);
+        bit++;
+        if (bit % 8 == 0) all_bytes[++byte] = 0x00;
+      }
+
+      if (enableGreen) {
+        all_bytes[byte]  = (all_bytes[byte] >> 1) + (((temp >> 8) & 0x01) << 7);
+        bit++;
+        if (bit % 8 == 0) all_bytes[++byte] = 0x00;
+      }
+    }
+
+    // This function call makes a choice about the data we just read,
+    //  and unifies the channels into a single coherrant bit-stream, or
+    //  it errors.
+    if (decodeHeader(implode(array_map("chr", all_bytes)))) {
+      if (verify_checksum()) {
+        log_error('Message passed checksum.', LOG_INFO);
+        return true;
+      }
+      else log_error('Message failed checksum.', LOG_ERR);
+    }
+    else log_error('Failed to decode the header.', LOG_ERR);
+    return false;
   }
 
 
@@ -642,7 +643,7 @@ function Bury(carrier_path, password, options) {
     // __payload_size  = $length[1];
     // compress      = (ord($msg_params[1]) & 0x01) ? true : false;
     // $this->store_filename  = (ord($msg_params[1]) & 0x04) ? true : false;
-    // $this->ciphertext  = substr($bytes, HEADER_LENGTH);
+    __ciphertext  = bytes.substr(HEADER_LENGTH);
     // if (VERSION_CODE == $ver[1]) {
     //   log_error('Found a payload length of '.__payload_size.' bytes.');
     //   return true;
@@ -841,55 +842,48 @@ function Bury(carrier_path, password, options) {
   * Try to load the carrier file specified by the argument.
   *  Returns true on success and false on failure.
   */
-    // if (file_exists($carrier_path) && is_file($carrier_path)) {
-    //   if (is_readable($carrier_path)) {
-      var ptr = carrier_path.lastIndexOf('.');
-        if (ptr > 0) {  // Gee... I sure hope we have a file extension...
-           switch (carrier_path.substring(ptr).toLowerCase()) {
-             case '.bmp':
-               __image  = gd.createFromWBMP(carrier_path);
-               break;
-             case '.gif':
-               __image  = gd.createFromGif(carrier_path);
-               break;
-             case '.png':
-               __image  = gd.createFromPng(carrier_path);
-               break;
-             case '.jpeg':
-             case '.jpg':
-               __image  = gd.createFromJpeg(carrier_path);
-               break;
-             default:
-               log_error(carrier_path + ' does not have a supported file extention. Failing, because: no carrier.', LOG_ERR);
-              return false;
-           }
-
-           if (__image) {
-             __x  = __image.width;
-             __y  = __image.height;
-             if (!__image.trueColor) __image = upgrade_color();
-             log_error('Loaded carrier with size ('+__x+', '+__y+').');
-           }
-           else {
-             log_error('We got to a point where we ought to have an image, and we don\'t.', LOG_ERR);
-           }
-         }
-         else {
-           log_error('Cannot determine file extention.', LOG_ERR);
-         }
-    //   }
-    //   else {
-    //     log_error('Cannot read the carrier file.', LOG_ERR);
-    //   }
-    // }
-    // else {
-    //   log_error('Bad path. Doesn\'t exist, or isn\'t a file.', LOG_ERR);
-    // }
-
+  if (fs.existsSync(carrier_path)) {
+    var ptr = carrier_path.lastIndexOf('.');
+    if (ptr > 0) {  // Gee... I sure hope we have a file extension...
+      switch (carrier_path.substring(ptr).toLowerCase()) {
+        case '.bmp':
+          __image  = gd.createFromWBMP(carrier_path);
+          break;
+        case '.gif':
+          __image  = gd.createFromGif(carrier_path);
+          break;
+        case '.png':
+          __image  = gd.createFromPng(carrier_path);
+          break;
+        case '.jpeg':
+        case '.jpg':
+          __image  = gd.createFromJpeg(carrier_path);
+          break;
+        default:
+          log_error(carrier_path + ' does not have a supported file extention. Failing, because: no carrier.', LOG_ERR);
+          return false;
+      }
+      if (__image) {
+        __x  = __image.width;
+        __y  = __image.height;
+        if (!__image.trueColor) __image = upgrade_color();
+        log_error('Loaded carrier with size ('+__x+', '+__y+').');
+      }
+      else {
+        log_error('We got to a point where we ought to have an image, and we don\'t.', LOG_ERR);
+      }
+    }
+    else {
+     log_error('Cannot determine file extention.', LOG_ERR);
+    }
+  }
+  else {
+    log_error('Bad path. Doesn\'t exist, or isn\'t a file.', LOG_ERR);
+  }
 }
-//
-//
-//
+
+
+
 ///**
 //* Report our version.
 //*/
