@@ -445,7 +445,8 @@ function Bury(carrier_path, password, options) {
         message_params  = message_params | ((store_filename) ? 0x04:0x00);
     // log_error('MESSAGE_PARAMS: 0x'.sprintf('%02X', $message_params).'.', LOG_INFO);
 
-    __ciphertext  = binbuf.pack('<HxBxI', [VERSION_CODE, message_params, (encrypted.length + checksum.length)]) + encrypted + checksum;
+    __ciphertext  = binbuf.pack('<HxBx', [VERSION_CODE, message_params]);
+    binbuf.packTo('>Is', __ciphertext, 5, [(encrypted.length + checksum.length), (encrypted + checksum)]);
 
     payload_size  = __ciphertext.length;  // Record the number of bytes to modulate.
     if (compress) {
@@ -581,14 +582,14 @@ function Bury(carrier_path, password, options) {
   var decrypt = function() {
     var return_value  = true;
     __iv_size  = aes_cipher.getIvSize();    // We need the size of the IV...
-    var nu_iv  = __ciphertext.substr(0, __iv_size);
+    var nu_iv  = __ciphertext.slice(0, __iv_size);
 
-    var ct     = __ciphertext.substr(__iv_size, payload_size-__iv_size);
-    aes_cipher.open(__key, nu_iv);
-    var decrypted     = aes_cipher.decrypt(ct);
+    var ct     = __ciphertext.slice(__iv_size);
+    aes_cipher.open(new Buffer(__key), new Buffer(nu_iv));
+    var decrypted     = aes_cipher.decrypt(new Buffer(ct));
     var decompressed  = (compress) ? bzip2.decompressFile(decrypted) : decrypted;
-    __file_name_info  = trim(store_filename ? decompressed.substr(0, 32) : '');
-    __plaintext  = trim(store_filename ? decompressed.substr(32) : decompressed);
+    __file_name_info  = store_filename ? decompressed.slice(0, 32).toString().trim() : '';
+    __plaintext       = store_filename ? decompressed.slice(32).toString().trim() : decompressed.toString();
 
     if (compress) log_error('Compression inflated '+decrypted.length+' bytes into '+decompressed.length+' bytes.', LOG_INFO);
     if (store_filename) log_error('Retrieved file name: '+__file_name_info, LOG_INFO);
@@ -655,9 +656,9 @@ function Bury(carrier_path, password, options) {
   var decodeHeader = function(bytes) {
     // First, we need to find the header...
     var ver  = binbuf.unpack('<H', bytes, 0);
-    var msg_params  = binbuf.unpack('<B', bytes, 3);
-    var length      = binbuf.unpack('>N', bytes, 5);
-    payload_size  = length[1];
+    var msg_params   = binbuf.unpack('<B', bytes, 3);
+    var payload_size = binbuf.unpack('>I', bytes, 5);
+
     compress        = (msg_params & 0x0001) ? true : false;
     store_filename  = (msg_params & 0x0004) ? true : false;
     __ciphertext  = bytes.slice(HEADER_LENGTH);
@@ -686,11 +687,11 @@ function Bury(carrier_path, password, options) {
   *  False otherwise.
   */
   var verify_checksum = function() {
-    var msg     = __ciphertext.substr(0, payload_size-16);
-    var chksum  = __ciphertext.substr(payload_size-16);
-    var hash    = CipherJS.MD5(msg);
+    var msg     = __ciphertext.slice(0, payload_size-16);
+    var chksum  = __ciphertext.slice(payload_size-16);
+    var hash    = CryptoJS.MD5(msg);
     __ciphertext  = msg;
-    return (!strncmp(chksum, hash, 16));
+    return (!strncmp(chksum.toString(), hash.toString(), 32));
   }
 
   /*
