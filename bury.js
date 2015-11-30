@@ -43,7 +43,7 @@
 * ============================================================================================================================
 * Note0: Regarding the checksum
 *  The MD5 checksum is the final 16-bytes of the bitstream. It is stored as binary, and its length is included in the
-*   PAYLOAD_SIZE field of the header. The checksum only relates to the MESSAGE DATA, and not to the HEADER.
+*   payload_size field of the header. The checksum only relates to the MESSAGE DATA, and not to the HEADER.
 * ============================================================================================================================
 *
 * ============================================================================================================================
@@ -108,19 +108,26 @@
 'use strict'
 var fs         = require('fs');           // File i/o
 var gd         = require('node-gd');      // Image manipulation library.
+var binbuf     = require('bufferpack');   // Bleh... typelessness....
 var MCrypt     = require('mcrypt');       // Cryptograhy
 var compressjs = require('compressjs');   // Compression library.
 var CryptoJS   = require("crypto-js");    // Hash
+var rng        = require('mersenne');     // We can't seed Math.random().
 
 var bzip2      = compressjs.bzip2;
 
 // These are global constants for the library.
-var VERSION_CODE    = 0x01;   // The version of the program. Will be included in the carrier.
+var VERSION_CODE    = 0x02;   // The version of the program. Will be included in the carrier.
 var MIN_PASS_LENGTH = 8;      // The length of the smallest password we will tolerate.
+var HEADER_LENGTH   = 9;      // Length of the header (in bytes).
 
 var LOG_DEBUG = 7;
 var LOG_INFO  = 5;
 var LOG_ERR   = 2;
+
+var STR_PAD_LEFT  = 1;
+var STR_PAD_RIGHT = 2;
+var STR_PAD_BOTH  = 3;
 
 
 // Instancing this object represents a full operation on a carrier.
@@ -212,22 +219,22 @@ function Bury(carrier_path, password, options) {
   */
   var rescale_carrier = function() {
     var return_value  = false;
-    var bits  = __payload_size * 8;
-    var ratio  = max(__x, __y) / min(__x, __y);
+    var bits  = payload_size * 8;
+    var ratio  = Math.max(__x, __y) / Math.min(__x, __y);
     var required_pixels  = __offset;
     var bpp = getBitsPerPixel();  // How many bits-per-pixel can we have?
     var n  = 0;
-    while ((bits > 0) && (isset(__strides[n]))) {
+    while ((bits > 0) && (__strides[n])) {
       required_pixels  += __strides[n++];
       bits  = bits - bpp;
     }
     log_error('Need a total of ' + required_pixels + ' pixels to store the given message with given password.');
 
-    n  = ceil(sqrt(required_pixels / ratio));
+    n  = Math.ceil(Math.sqrt(required_pixels / ratio));
     var width  = n;
     var height  = n;
-    if (__x >= __y) width = ceil(width * ratio);
-    else height = ceil(height * ratio);
+    if (__x >= __y) width = Math.ceil(width * ratio);
+    else height = Math.ceil(height * ratio);
 
     var img  = gd.createTrueColorSync(width, height);
     if (img) {
@@ -236,8 +243,8 @@ function Bury(carrier_path, password, options) {
           if ((height * width) >= required_pixels) {    // Do we have enough space in the new carrier?
             __image.destroy();
             __image  = img;
-            __x  = img.width();
-            __y  = img.height();
+            __x  = img.width;
+            __y  = img.height;
             log_error('Scaled carrier into minimum required size for the given password: (' + __x + ', ' + __y + ').', LOG_INFO);
             __strides  = [];  // We will need to truncate the stride array because our image has shrunk.
             demarcate_strides();
@@ -314,9 +321,9 @@ function Bury(carrier_path, password, options) {
       temp[1]  = hash_arr[(i+11)] ^ temp[1];
       temp[2]  = hash_arr[(i+18)] ^ temp[2];
       temp[3]  = hash_arr[(i+25)] ^ temp[3];
-      //$this->log_error(__METHOD__.' RNG ['.($i+4).', '.($i+11).', '.($i+18).', '.($i+25).']');
+      //log_error('RNG ['+(i+4)+', '+(i+11)+', '+(i+18)+', '+(i+25)+']');
     }
-    // //$this->log_error(__METHOD__.' Seed Prep: '.$temp[0].' '.$temp[1].' '.$temp[2].' '.$temp[3]);
+    log_error('Seed Prep: '+temp[0]+' '+temp[1]+' '+temp[2]+' '+temp[3]);
     __stride_seed = (((temp[0] *16777216) % 128) + (temp[1] * 65536) + (temp[2] * 256) + temp[3]);
 
     // Spin the password around for awhile...
@@ -335,18 +342,18 @@ function Bury(carrier_path, password, options) {
   */
   var demarcate_strides = function() {
     if (__stride_seed >= 0) {
-      mt_srand(__stride_seed);
-      __usable_pixels  = 0;  // How many pixels can we use?
+      rng.seed(__stride_seed);
+      var usable_pixels  = 0;  // How many pixels can we use?
       var total_remaining  = (__x * __y) - __offset;  // Total remaining pixels.
       while (total_remaining > 0) {
-        var delta  = mt_rand(1, __max_stride);
+        var delta  = rng.rand(__max_stride-1)+1;
         total_remaining  = total_remaining - delta;
-        if ($total_remaining > 0) {
-          __usable_pixels++;
+        if (total_remaining > 0) {
+          usable_pixels++;
           __strides.push(delta);
         }
       }
-      log_error('There are ' + __usable_pixels + ' usable pixels.', LOG_INFO);
+      log_error('There are ' + usable_pixels + ' usable pixels.', LOG_INFO);
       findMaxPayloadSize();
     }
     else {
@@ -360,12 +367,16 @@ function Bury(carrier_path, password, options) {
   *  Returns an integer.
   */
   var findMaxPayloadSize = function() {
+    var enabled_channels  = enableRed   ? 'Red '   : '';
+    enabled_channels     += enableGreen ? 'Green ' : '';
+    enabled_channels     += enableBlue  ? 'Blue '  : '';
+    log_error('Enabled channels: ' + enabled_channels);
     var bpp = getBitsPerPixel();
     var raw_pixels  = (__x * __y) - __offset;
     var stride_pix  = __strides.length;
-    __max_payload_size = floor((bpp * stride_pix) / 8);    // The gross size.
-    log_error('Maximum message size is ' + __max_payload_size + ' bytes.', LOG_INFO);
-    return __max_payload_size;
+    max_payload_size = Math.floor((bpp * stride_pix) / 8);    // The gross size.
+    log_error('Maximum message size is ' + max_payload_size + ' bytes.', LOG_INFO);
+    return max_payload_size;
   }
 
 
@@ -395,8 +406,8 @@ function Bury(carrier_path, password, options) {
   */
   var set_channel_spec = function() {
     var j  = __offset % __x;
-    var i  = floor(__offset / __x);
-    var temp  = __image.colorAt(j, i);
+    var i  = Math.floor(__offset / __x);
+    var temp  = __image.imageColorAt(j, i);
 
     var red   = ((temp >> 16) & 0xFE) | (enableRed   ? 0x01:0x00);
     var green = ((temp >> 8) & 0xFE)  | (enableGreen ? 0x01:0x00);
@@ -415,37 +426,36 @@ function Bury(carrier_path, password, options) {
     var message_params  = 0x00;
 
     if (store_filename) {
-      if (strlen(__file_name_info) != 32) {
+      if (__file_name_info.length != 32) {
         log_error('Filename was not 32 bytes. storing it generically...', LOG_WARNING);
         __file_name_info  = '                bad_filename.txt';
       }
       __plaintext  = __file_name_info + __plaintext;
     }
 
-    var nu_iv      = generateIv();
-    __iv_size = 128;  // TODO: ????
+    var nu_iv      = aes_cipher.generateIv();
 
     var compressed = (compress) ? bzip2.compressFile(__plaintext, 9) : __plaintext;
-    //var encrypted  = nu_iv+ mcrypt_encrypt(CIPHER, $this->key, $compressed, BLOCK_MODE, $nu_iv);
-    //
+    aes_cipher.open(new Buffer(__key));
+    var encrypted  = nu_iv+ aes_cipher.encrypt(compressed);
+
     var checksum  = CryptoJS.MD5(encrypted);
     console.log(JSON.stringify(checksum, null, 4));
-    // $message_params  = $message_params | ((compress)      ? 0x01:0x00);
-    // $message_params  = $message_params | (($this->store_filename)  ? 0x04:0x00);
+    var message_params  = message_params | ((compress)       ? 0x01:0x00);
+        message_params  = message_params | ((store_filename) ? 0x04:0x00);
     // log_error('MESSAGE_PARAMS: 0x'.sprintf('%02X', $message_params).'.', LOG_INFO);
-    //
-    // $this->ciphertext  = pack('vxCxN', VERSION_CODE, $message_params, strlen($encrypted.$checksum)).$encrypted.$checksum;
-    //
-    // __payload_size  = strlen($this->ciphertext);  // Record the number of bytes to modulate.
-    //
-    // if (compress) {
-    //   $pt_len    = strlen($this->plaintext);
-    //   $comp_len  = strlen($compressed);
-    //   log_error('Compressed '.$pt_len.' bytes into '.$comp_len.'.', LOG_INFO);
-    // }
-    // if ($this->store_filename) {
-    //   log_error('Prepended filename to plaintext: '.__file_name_info, LOG_INFO);
-    // }
+
+    __ciphertext  = binbuf.pack('<HxBxI', [VERSION_CODE, message_params, (encrypted.length + checksum.length)]) + encrypted + checksum;
+
+    payload_size  = __ciphertext.length;  // Record the number of bytes to modulate.
+    if (compress) {
+      var pt_len    = __plaintext.length;
+      var comp_len  = compressed.length;
+      log_error('Compressed '+pt_len+' bytes into '+comp_len+'.', LOG_INFO);
+    }
+    if (store_filename) {
+      log_error('Prepended filename to plaintext: '+__file_name_info, LOG_INFO);
+    }
     return return_value;
   }
 
@@ -455,7 +465,7 @@ function Bury(carrier_path, password, options) {
   */
   var modulate = function() {
     set_channel_spec();    // Record the channels in use.
-    __bit_cursor  = 0;
+    __bitCursor  = 0;
     var initial  = __offset + __strides[0];  // The offset stores the active channel settings.
 
     log_error('Initial pixel of modulation: (' + get_x_coords_by_linear(initial) + ', ' + get_y_coords_by_linear(initial) + ') (x, y).');
@@ -467,7 +477,7 @@ function Bury(carrier_path, password, options) {
       var i  = get_x_coords_by_linear(abs_pix);
       var j  = get_y_coords_by_linear(abs_pix);
 
-      var temp  = __image.colorAt(i, j);
+      var temp  = __image.imageColorAt(i, j);
 
       var red    = (temp >> 16) & 0xFF;
       var green  = (temp >> 8) & 0xFF;
@@ -475,7 +485,7 @@ function Bury(carrier_path, password, options) {
 
       var bit;
 
-      if (visible_result) {
+      if (visibleResult) {
          if (enableRed)    bit = getBit();
          if (enableBlue)   bit = getBit();
          if (enableGreen)  bit = getBit();
@@ -494,17 +504,17 @@ function Bury(carrier_path, password, options) {
       else {
         if (enableRed) {
           bit    = getBit();
-          if (bit !== FALSE) red  = (red & 0xFE) + bit;
+          if (bit !== false) red  = (red & 0xFE) + bit;
         }
 
         if (enableBlue) {
           bit    = getBit();
-          if (bit !== FALSE) blue  = (blue & 0xFE) + bit;
+          if (bit !== false) blue  = (blue & 0xFE) + bit;
         }
 
         if (enableGreen) {
           bit    = getBit();
-          if (bit !== FALSE) green  = (green & 0xFE) + bit;
+          if (bit !== false) green  = (green & 0xFE) + bit;
         }
       }
       __image.setPixel(i, j, __image.colorAllocate(red, green, blue));
@@ -519,16 +529,16 @@ function Bury(carrier_path, password, options) {
   */
   var getBit = function() {
     var return_value  = false;
-    if (__bit_cursor < (__payload_size * 8)) {
-      var byte  = floor(__bit_cursor / 8);
-      var bit   = __bit_cursor % 8;
+    if (__bitCursor < (payload_size * 8)) {
+      var byte  = Math.floor(__bitCursor / 8);
+      var bit   = __bitCursor % 8;
       var mask  = 0x01 << bit;
       var feed  = __ciphertext[byte];
       return_value  = (feed & mask) ? 0x01:0x00;
-      __bit_cursor++;
+      __bitCursor++;
     }
     else {
-      return_value  = (visible_result) ? false: (rand(0,1))  ? 0x01:0x00;
+      return_value  = (visibleResult) ? false: (rng.rand(1))  ? 0x01:0x00;
     }
     return return_value;
   }
@@ -544,7 +554,7 @@ function Bury(carrier_path, password, options) {
   * Helper function that returns the y-component of an image co-ordinate if
   *  we give it a linear length argument.
   */
-  var get_y_coords_by_linear = function(linear) { return floor($linear / __x); }
+  var get_y_coords_by_linear = function(linear) { return Math.floor(linear / __x); }
 
 
   /**************************************************************************
@@ -555,10 +565,10 @@ function Bury(carrier_path, password, options) {
   *  across.
   */
   var get_channel_spec = function() {
-    var temp    = __image.colorAt(
+    var temp    = __image.imageColorAt(
       __offset % __x,
-      floor(__offset / __x))
-    ;
+      Math.floor(__offset / __x)
+    );
     enableRed   = ((temp >> 16) & 0x01) ? true : false;
     enableGreen = ((temp >> 8) & 0x01)  ? true : false;
     enableBlue  = (temp & 0x01)         ? true : false;
@@ -569,19 +579,20 @@ function Bury(carrier_path, password, options) {
   *  Decrypt the ciphertext.
   */
   var decrypt = function() {
-    // $return_value  = true;
-    // $this->iv_size  = mcrypt_get_iv_size(CIPHER, BLOCK_MODE);    // We need the size of the IV...
-    // $nu_iv  = substr($this->ciphertext, 0, $this->iv_size);
-    //
-    // $ct     = substr($this->ciphertext, $this->iv_size, __payload_size-$this->iv_size);
-    // $decrypted    = mcrypt_decrypt(CIPHER, $this->key, $ct, BLOCK_MODE, $nu_iv);
-    // $decompressed  = (compress) ? bzdecompress($decrypted) : $decrypted;
-    // __file_name_info  = trim(($this->store_filename) ? substr($decompressed, 0, 32) : '');
-    // $this->plaintext  = trim(($this->store_filename) ? substr($decompressed, 32) : $decompressed);
-    //
-    // if (compress) log_error('Compression inflated '.strlen($decrypted).' bytes into '.strlen($decompressed).' bytes.', LOG_INFO);
-    // if ($this->store_filename) log_error('Retrieved file name: '.__file_name_info, LOG_INFO);
-    // return $return_value;
+    var return_value  = true;
+    __iv_size  = aes_cipher.getIvSize();    // We need the size of the IV...
+    var nu_iv  = __ciphertext.substr(0, __iv_size);
+
+    var ct     = __ciphertext.substr(__iv_size, payload_size-__iv_size);
+    aes_cipher.open(__key, nu_iv);
+    var decrypted     = aes_cipher.decrypt(ct);
+    var decompressed  = (compress) ? bzip2.decompressFile(decrypted) : decrypted;
+    __file_name_info  = trim(store_filename ? decompressed.substr(0, 32) : '');
+    __plaintext  = trim(store_filename ? decompressed.substr(32) : decompressed);
+
+    if (compress) log_error('Compression inflated '+decrypted.length+' bytes into '+decompressed.length+' bytes.', LOG_INFO);
+    if (store_filename) log_error('Retrieved file name: '+__file_name_info, LOG_INFO);
+    return return_value;
   }
 
 
@@ -599,12 +610,12 @@ function Bury(carrier_path, password, options) {
 
     // Visit each usable pixel and demodulate it.
     var abs_pix  = __offset;
-    for (n = 0; n < count(__strides); n++) {
+    for (var n = 0; n < __strides.length; n++) {
       abs_pix  = abs_pix + __strides[n];
-      i  = get_x_coords_by_linear(abs_pix);
-      j  = get_y_coords_by_linear(abs_pix);
+      var i  = get_x_coords_by_linear(abs_pix);
+      var j  = get_y_coords_by_linear(abs_pix);
 
-      temp  = imagecolorat(__image, i, j);
+      var temp  = __image.imageColorAt(i, j);
 
       if (enableRed) {
         all_bytes[byte]  = (all_bytes[byte] >> 1) + (((temp >> 16) & 0x01) << 7);
@@ -628,7 +639,7 @@ function Bury(carrier_path, password, options) {
     // This function call makes a choice about the data we just read,
     //  and unifies the channels into a single coherrant bit-stream, or
     //  it errors.
-    if (decodeHeader(implode(array_map("chr", all_bytes)))) {
+    if (decodeHeader(all_bytes)) {
       if (verify_checksum()) {
         log_error('Message passed checksum.', LOG_INFO);
         return true;
@@ -643,21 +654,21 @@ function Bury(carrier_path, password, options) {
 
   var decodeHeader = function(bytes) {
     // First, we need to find the header...
-    //var ver  = unpack('v', substr($bytes, 0, 2));
-    // $msg_params  = unpack('C', substr($bytes, 3, 1));
-    // $length  = unpack('N', substr($bytes, 5));
-    // __payload_size  = $length[1];
-    // compress      = (ord($msg_params[1]) & 0x01) ? true : false;
-    // $this->store_filename  = (ord($msg_params[1]) & 0x04) ? true : false;
-    __ciphertext  = bytes.substr(HEADER_LENGTH);
-    // if (VERSION_CODE == $ver[1]) {
-    //   log_error('Found a payload length of '.__payload_size.' bytes.');
-    //   return true;
-    // }
-    // else {
-    //   log_error('Version code mismatch. File was written by version '.$ver[1].' and this is version '.VERSION_CODE.'.', LOG_ERR);
-    //   return false;
-    // }
+    var ver  = binbuf.unpack('<H', bytes, 0);
+    var msg_params  = binbuf.unpack('<B', bytes, 3);
+    var length      = binbuf.unpack('>N', bytes, 5);
+    payload_size  = length[1];
+    compress        = (msg_params & 0x0001) ? true : false;
+    store_filename  = (msg_params & 0x0004) ? true : false;
+    __ciphertext  = bytes.slice(HEADER_LENGTH);
+    if (VERSION_CODE == ver) {
+      log_error('Found a payload length of '+payload_size+' bytes.');
+      return true;
+    }
+    else {
+      log_error('Version code mismatch. File was written by version '+ver+' and this is version '+VERSION_CODE+'.', LOG_ERR);
+      return false;
+    }
   }
 
   /*
@@ -675,101 +686,135 @@ function Bury(carrier_path, password, options) {
   *  False otherwise.
   */
   var verify_checksum = function() {
-    var msg     = __ciphertext.substr(0, __payload_size-16);
-    var chksum  = __ciphertext.substr(__payload_size-16);
+    var msg     = __ciphertext.substr(0, payload_size-16);
+    var chksum  = __ciphertext.substr(payload_size-16);
     var hash    = CipherJS.MD5(msg);
     __ciphertext  = msg;
     return (!strncmp(chksum, hash, 16));
   }
 
-  /**
-  * Set the active channels. Passed no parameters, all channels will be used.
-  *  This must be done before the image is set.
-  *  At least one channel must be enabled.
-  *  Returns false if the current settings are invalid.
+  /*
+  * Taken from:
+  * http://phpjs.org/functions/basename/
+  *   discuss at: http://phpjs.org/functions/basename/
+  *   original by: Kevin van Zonneveld (http://kevin.vanzonneveld.net)
+  *   improved by: Ash Searle (http://hexmen.com/blog/)
+  *   improved by: Lincoln Ramsay
+  *   improved by: djmix
+  *   improved by: Dmitry Gorelenkov
   */
-  this.setChannels = function(red, green, blue) {
-    enableRed   = red   || false;
-    enableGreen = green || false;
-    enableBlue  = blue  || false;
-    findMaxPayloadSize();
-    var bpp  = getBitsPerPixel();
-    if (bpp === 0) return false;
-    var enabled_channels  = enableRed   ? 'Red '   : '';
-    enabled_channels     += enableGreen ? 'Green ' : '';
-    enabled_channels     += enableBlue  ? 'Blue '  : '';
-    log_error('Enabled channels: ' + enabled_channels);
-    return true;
-  }
+  function basename(path, suffix) {
+    var b = path;
+    var lastChar = b.charAt(b.length - 1);
 
+    if (lastChar === '/' || lastChar === '\\') b = b.slice(0, -1);
+    b = b.replace(/^.*[\/\\]/g, '');
+    if (typeof suffix === 'string' && b.substr(b.length - suffix.length) == suffix) {
+      b = b.substr(0, b.length - suffix.length);
+    }
+    return b;
+  }
 
 
   /**
   * Setting the message.
   */
   this.setMessage = function(message, name_override) {
-    // $return_value  = false;
-    // if (isset($message)) {
-    //   if (strlen($this->plaintext) == 0) {
-    //     if (is_file($message)) {
-    //       log_error('Message looks like a path to a file.', LOG_INFO);
+    var return_value  = false;
+    if (message) {
+      if (__plaintext.length == 0) {
+        //if (fs.lstatSync(message).isFile()) {
+        if (false) {  // TODO: Obviously not fully-ported...
+          log_error('Message looks like a path to a file.', LOG_INFO);
     //       if (is_readable($message)) {
-    //         $this->plaintext  = file_get_contents($message);
-    //         if ($this->store_filename) {
-    //           if ($name_override) $message  = $name_override;    // Facilitates HTML forms.
-    //
-    //           $base  = basename($message);
-    //           __file_name_info  = $this->normalize_filename($base);
-    //           log_error('Will use filename: '.__file_name_info, LOG_INFO);
-    //         }
-    //         log_error('Loaded '.strlen($this->plaintext).' raw message bytes from file.', LOG_INFO);
+            __plaintext  = fs.readFileSync(message);
+            if (store_filename) {
+              if (name_override) $message  = name_override;    // Facilitates HTML forms.
+
+              var base  = basename($message);
+              __file_name_info  = normalize_filename(base);
+              log_error('Will use filename: '+__file_name_info, LOG_INFO);
+            }
+            log_error('Loaded '+__plaintext.length+' raw message bytes from file.', LOG_INFO);
     //       }
     //       else log_error('Provided message file is not readable.', LOG_INFO);
-    //     }
-    //     else if (strlen($message) > 0) {
-    //       log_error('Message looks like a string.', LOG_INFO);
-    //       $this->plaintext  = $message;
-    //       $this->store_filename  = false;    // No need for this.
-    //     }
-    //     else log_error('Message must be either a path or a string.', LOG_ERR);
-    //   }
-    //   else log_error('Plaintext has already been set.', LOG_ERR);
-    // }
-    // else log_error('Message length is zero.', LOG_ERR);
-    //
-    // // If we loaded a message successfully, try to encrypt it and fit it into the carrier.
-    // if (strlen($this->plaintext) > 0) {
-    //   $this->iv_size  = mcrypt_get_iv_size(CIPHER, BLOCK_MODE);    // We need the size of the IV...
-    //   if ($this->iv_size !== false) {
-    //     if ($this->encrypt()) {
-    //       if (__payload_size <= $this->max_payload_size) {
-    //         // Only scale the image down. Never up. To do otherwise exposes the message.
-    //         if ($this->rescale) $this->rescale_carrier();
-    //
-    //         if ($this->modulate()) {
-    //           $return_value  = true;
-    //         }
-    //         else log_error('Modulation failed.', LOG_ERR);
-    //       }
-    //       else log_error('Encryption produced a payload of '.__payload_size.' bytes, which is '.(__payload_size - $this->max_payload_size).' bytes too large.', LOG_ERR);
-    //     }
-    //     else log_error('Encryption failed.', LOG_ERR);
-    //   }
-    //   else log_error('Bad cipher/mode combination.', LOG_ERR);
-    // }
-    // return $return_value;
+        }
+        else if (message.length > 0) {
+          log_error('Message looks like a string.', LOG_INFO);
+          __plaintext  = message;
+          store_filename  = false;    // No need for this.
+        }
+        else log_error('Message must be either a path or a string.', LOG_ERR);
+      }
+      else log_error('Plaintext has already been set.', LOG_ERR);
+    }
+    else log_error('Message length is zero.', LOG_ERR);
+
+    // If we loaded a message successfully, try to encrypt it and fit it into the carrier.
+    if (__plaintext.length > 0) {
+      __iv_size  = aes_cipher.getIvSize();    // We need the size of the IV...
+      if (__iv_size) {
+        if (encrypt()) {
+          if (payload_size <= max_payload_size) {
+            // Only scale the image down. Never up. To do otherwise exposes the message.
+            if (rescaleCarrier) rescale_carrier();
+            if (modulate()) {
+              return_value  = true;
+            }
+            else log_error('Modulation failed.', LOG_ERR);
+          }
+          else log_error('Encryption produced a payload of '+payload_size+' bytes, which is '+(payload_size - max_payload_size)+' bytes too large.', LOG_ERR);
+        }
+        else log_error('Encryption failed.', LOG_ERR);
+      }
+      else log_error('Bad cipher/mode combination.', LOG_ERR);
+    }
+    return return_value;
+  }
+
+  /*
+  *  Thanks, David (from StackOverflow)
+  *  http://stackoverflow.com/users/60682/david
+  *  Modified somewhat. Original was...
+  *
+  *  Javascript string pad
+  *  http://www.webtoolkit.info/
+  */
+  var pad = function(str, len, pad, dir) {
+    if (typeof(len) == "undefined") { var len = 32;  }
+    if (typeof(pad) == "undefined") { var pad = ' '; }
+    if (typeof(dir) == "undefined") { var dir = STR_PAD_LEFT; }
+
+    if (len + 1 >= str.length) {
+      switch (dir){
+        case STR_PAD_LEFT:
+          str = Array(len + 1 - str.length).join(pad) + str;
+          break;
+
+        case STR_PAD_BOTH:
+          var right = Math.ceil((padlen = len - str.length) / 2);
+          var left = padlen - right;
+          str = Array(left+1).join(pad) + str + Array(right+1).join(pad);
+          break;
+        default:
+          str = str + Array(len + 1 - str.length).join(pad);
+          break;
+      }
+    }
+    return str;
   }
 
 
   /**
-  * Returns a string of length zero. Always.
+  * Returns a string of length 32. Always.
   */
-  var normalize_filename = function($base) {
-    // if (($base_len = strlen($base)) == 0) {
-    //   return '     ThisFileExtensionWasBad.txt';
-    // }
-    // $base  = (strlen($base) > 32) ? substr($base, strlen($base)-32):sprintf("%' 32s", $base);
-    // return $base;
+  var normalize_filename = function(base_name) {
+    var base_len = base_name.length;
+    if (base_len == 0) {
+      return '     ThisFileExtensionWasBad.txt';
+    }
+    var base  = (base_len > 32) ? base_name.substr(base_len-32) : pad(base_name);
+    return base;
   }
 
 
@@ -777,27 +822,32 @@ function Bury(carrier_path, password, options) {
   * Tries to retreive a message from the carrier and the given password.
   */
   this.getMessage = function() {
-    // $return_value  = false;
-    // if (__image) {
-    //   if ($this->demodulate()) {
-    //     if ($this->decrypt()) {
-    //       if ($this->store_filename) {
-    //         if ($this->write_file) {
-    //           $bytes_out  = file_put_contents($this->write_file+'/'+__file_name_info, $this->plaintext);
-    //           if ($bytes_out) {
-                 log_error('Wrote '+$bytes_out+' bytes to '+__file_name_info, LOG_INFO);
-    //           }
-    //           else log_error('Failed to write to file: '+__file_name_info, LOG_WARNING);
-    //         }
-    //       }
-    //       $return_value  = $this->plaintext;
-    //     }
-    //     else log_error('Decryption failed.', LOG_ERR);
-    //   }
-    //   else log_error('Demodulation failed.', LOG_ERR);
-    // }
-    // else log_error('No carrier loaded.', LOG_ERR);
-    // return $return_value;
+    var return_value  = false;
+    if (__image) {
+      if (demodulate()) {
+        if (decrypt()) {
+          if (store_filename) {
+            if (write_file) {
+              fs.writeFile(__file_name_info, __plaintext, 'utf8',
+                function(err) {
+                  if (err) {
+                    log_error('Failed to write to file: '+__file_name_info+' because '+err, LOG_WARNING);
+                  }
+                  else {
+                    log_error('Wrote '+__plaintext.length+' bytes to '+__file_name_info, LOG_INFO);
+                  }
+                }
+              );
+            }
+          }
+          return_value  = __plaintext;
+        }
+        else log_error('Decryption failed.', LOG_ERR);
+      }
+      else log_error('Demodulation failed.', LOG_ERR);
+    }
+    else log_error('No carrier loaded.', LOG_ERR);
+    return return_value;
   }
 
 
@@ -806,7 +856,7 @@ function Bury(carrier_path, password, options) {
   */
   this.outputImage = function(output_path) {
     if (output_path) {
-      __image.savePNG(output_path, function(err) {
+      __image.savePng(output_path, function(err) {
           if (err) {
             log_error('Failed to save PNG file.', LOG_ERR);
           }
@@ -874,6 +924,7 @@ function Bury(carrier_path, password, options) {
         __y  = __image.height;
         if (!__image.trueColor) __image = upgrade_color();
         log_error('Loaded carrier with size ('+__x+', '+__y+').');
+        demarcate_strides();
       }
       else {
         log_error('We got to a point where we ought to have an image, and we don\'t.', LOG_ERR);

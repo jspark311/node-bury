@@ -4,7 +4,7 @@
   "description": "A steganographic and cryptographic library for nodejs.",
   "main": "bury.js",
   "scripts": {
-    "start": "node bury.js"
+    "start": "node index.js"
   },
   "keywords": [
     "Cryptography",
@@ -21,9 +21,11 @@
   },
   "homepage": "https://github.com/jspark311/node-bury",
   "dependencies": {
+    "bufferpack": "0.0.6",
     "compressjs": "^1.0.3",
     "crypto-js": "^3.1.5",
     "mcrypt": "^0.1.9",
+    "mersenne": "0.0.3",
     "node-gd": "^1.1.0"
   }
 }
