@@ -130,8 +130,45 @@ var STR_PAD_RIGHT = 2;
 var STR_PAD_BOTH  = 3;
 
 
-// Instancing this object represents a full operation on a carrier.
+// Instancing this object represents a full operation on a carrier. Either encrypting or decyrpting.
 function Bury(carrier_path, password, options) {
+  /**************************************************************************
+  * These are the options that can be supplied to the bury operation.       *
+  *   The members below represents an exhaustive list, and the default      *
+  *   values for each option.                                               *
+  **************************************************************************/
+  options = options ? options : {};
+    // Enabled carrier channels. No alpha support due to it standing out like a flare that says: 'ANOMALY!'.
+    // It should also be noted that not using all of the channels makes the statistical profile of the
+    //   noise asymetrical. No human being could ever see this with their eyes, but a machine might.
+    var enableRed       = options.hasOwnProperty('enableRed')      ? options.enableRed         : true;
+    var enableGreen     = options.hasOwnProperty('enableGreen')    ? options.enableGreen       : true;
+    var enableBlue      = options.hasOwnProperty('enableBlue')     ? options.enableBlue        : true;
+
+    // DEBUG OPTION    Set to true to expose the affected pixels in the image.
+    var visibleResult   = options.hasOwnProperty('visibleResult')  ? options.visibleResult     : false;
+
+    // Crush the message prior to encrypting?
+    var compress        = options.hasOwnProperty('compress')       ? options.compress          : true;
+
+    // Should the output image be scaled to a minimum-size needed to fit the message?
+    var rescaleCarrier  = options.hasOwnProperty('rescaleCarrier') ? options.rescaleCarrier    : true;
+
+    // DEBUG OPTION    How noisy should this class be about what it's doing?
+    var verbosity       = options.hasOwnProperty('verbosity')      ? options.verbosity         : LOG_DEBUG;
+
+  /* These options apply to treatment of filenames for embedded files. */
+    // Encrypt only: If the user sets this to false, we will not store file information.
+    var store_filename  = options.hasOwnProperty('storeFilename')  ? options.storeFilename     : true;
+
+    // Decrypt only: Should we write an output file, if applicable? Ignored for encryption.
+    var write_file      = options.hasOwnProperty('writeFile')      ? options.writeFile         : true;
+
+
+  /**************************************************************************
+  * Everything below this block is internal machinary of the class.         *
+  **************************************************************************/
+
   /* These are instance variables for manipulating the carrier image. */
     var __image        = false; // Our working copy of the carrier.
     var __x            = 0;     // Cursor within the image.
@@ -155,60 +192,21 @@ function Bury(carrier_path, password, options) {
   // Holds the filename if setMessage() is called with a path.
   var __file_name_info  = false;
 
-
   var max_payload_size = -1;  // Used to decide how much plaintext we can stuff into the carrier.
   var payload_size     = -1;  // The size of the message after encryption and compression
 
 
-  /*
-  * These are the options that can be supplied to the bury operation.
-  *  The members below represents an exhaustive list, and the default values for each option.
-  */
-  options = options ? options : {};
-    // Enabled carrier channels. No alpha support due to it standing out like a flare that says: 'ANOMALY!'.
-    // It should also be noted that not using all of the channels makes the statistical profile of the
-    //   noise asymetrical. No human being could ever see this with their eyes, but a machine might.
-    var enableRed       = options.hasOwnProperty('enableRed')      ? options.enableRed         : true;
-    var enableGreen     = options.hasOwnProperty('enableGreen')    ? options.enableGreen       : true;
-    var enableBlue      = options.hasOwnProperty('enableBlue')     ? options.enableBlue        : true;
-
-    // DEBUG OPTION    Set to true to expose the affected pixels in the image.
-    var visibleResult   = options.hasOwnProperty('visibleResult')  ? options.visibleResult     : false;
-
-    // DEBUG OPTION    How noisy should this class be about what it's doing?
-    var verbosity       = options.hasOwnProperty('verbosity')      ? options.verbosity         : LOG_DEBUG;
-
-  /* These options apply to treatment of filenames for embedded files. */
-    // If the user sets this to false, we will not store file information.
-    var store_filename  = options.hasOwnProperty('storeFilename')  ? options.storeFilename     : true;
-
-    // Decrypt only: Should we write an output file, if applicable?
-    var write_file      = options.hasOwnProperty('writeFile')      ? options.writeFile         : true;
-
-  // Crush the message prior to encrypting?
-  var compress        = options.hasOwnProperty('compress')       ? options.compress          : true;
-
-  // Should the output image be scaled to a minimum-size needed to fit the message?
-  var rescaleCarrier  = options.hasOwnProperty('rescaleCarrier') ? options.rescaleCarrier    : true;
-
+  /* Logging is done this way to make redicrection of output more convenient. */
+  var log_error = function(body, v) {
+    v = v ? v : LOG_DEBUG;
+    if (v <= verbosity) console.log(body);
+  };
 
 
   /*
   * Alrighty.... Let's setup crypto stuff...
   */
-  console.log(MCrypt.getAlgorithmNames());
-  console.log(MCrypt.getModeNames());
   var aes_cipher = new MCrypt.MCrypt('rijndael-128', 'cbc');
-
-
-  /**************************************************************************
-  * Everything below this block is internal machinary of the class.         *
-  **************************************************************************/
-
-  var log_error = function(body, v) {
-    v = v ? v : LOG_DEBUG;
-    if (v <= verbosity) console.log(body);
-  };
 
 
   /**
@@ -229,6 +227,7 @@ function Bury(carrier_path, password, options) {
       bits  = bits - bpp;
     }
     log_error('Need a total of ' + required_pixels + ' pixels to store the given message with given password.');
+    log_error('Need a total of ' + required_pixels + ' pixels to store the given message with given password.');
 
     n  = Math.ceil(Math.sqrt(required_pixels / ratio));
     var width  = n;
@@ -238,7 +237,7 @@ function Bury(carrier_path, password, options) {
 
     var img  = gd.createTrueColorSync(width, height);
     if (img) {
-      if (img.copyResized(__image, 0, 0, 0, 0, width, height, __x, __y)) {
+      if (__image.copyResized(img, 0, 0, 0, 0, width, height, __x, __y)) {
         if ((height * width) < (__x * __y)) {    // Did we actually shrink the carrier?
           if ((height * width) >= required_pixels) {    // Do we have enough space in the new carrier?
             __image.destroy();
