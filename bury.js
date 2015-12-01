@@ -449,7 +449,7 @@ function Bury(carrier_path, password, options) {
       if (binbuf.packTo('>I',  __ciphertext, 5, [payload_length])) {
         if (binbuf.packTo(aes_cipher.getIvSize()+'B', __ciphertext, 9, nu_iv)) {
           if (binbuf.packTo(encrypted.length+'B', __ciphertext, (9+aes_cipher.getIvSize()), encrypted)) {
-            if (binbuf.packTo('16B', __ciphertext, payload_length-16, checksum)) {
+            if (binbuf.packTo(checksum.length+'B', __ciphertext, payload_length-16, checksum)) {
               log_error('Packed payload. Ready for modulation.', LOG_DEBUG);
               payload_size  = __ciphertext.length;  // Record the number of bytes to modulate.
               if (compress) {
