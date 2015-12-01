@@ -436,26 +436,42 @@ function Bury(carrier_path, password, options) {
 
     var compressed = (compress) ? bzip2.compressFile(__plaintext, 9) : __plaintext;
     aes_cipher.open(new Buffer(__key));
-    var encrypted  = nu_iv+ aes_cipher.encrypt(compressed);
+    var encrypted  = aes_cipher.encrypt(compressed);
 
-    var checksum  = CryptoJS.MD5(encrypted);
-    console.log(JSON.stringify(checksum, null, 4));
+    var checksum  = toByteArray(CryptoJS.MD5(encrypted).words);
     var message_params  = message_params | ((compress)       ? 0x01:0x00);
         message_params  = message_params | ((store_filename) ? 0x04:0x00);
-    // log_error('MESSAGE_PARAMS: 0x'.sprintf('%02X', $message_params).'.', LOG_INFO);
 
-    __ciphertext  = binbuf.pack('<HxBx', [VERSION_CODE, message_params]);
-    binbuf.packTo('>Is', __ciphertext, 5, [(encrypted.length + checksum.length), (encrypted + checksum)]);
-
-    payload_size  = __ciphertext.length;  // Record the number of bytes to modulate.
-    if (compress) {
-      var pt_len    = __plaintext.length;
-      var comp_len  = compressed.length;
-      log_error('Compressed '+pt_len+' bytes into '+comp_len+'.', LOG_INFO);
+    var payload_length = (encrypted.length + aes_cipher.getIvSize() + checksum.length);
+    __ciphertext  = new Buffer(payload_length + HEADER_LENGTH);
+    //console.log(JSON.stringify(__ciphertext, null, 3));
+    if (binbuf.packTo('<HxBx', __ciphertext, 0, [VERSION_CODE, message_params])) {
+      if (binbuf.packTo('>I',  __ciphertext, 5, [payload_length])) {
+        if (binbuf.packTo(aes_cipher.getIvSize()+'B', __ciphertext, 9, nu_iv)) {
+          if (binbuf.packTo(encrypted.length+'B', __ciphertext, (9+aes_cipher.getIvSize()), encrypted)) {
+            if (binbuf.packTo('16B', __ciphertext, payload_length-16, checksum)) {
+              log_error('Packed payload. Ready for modulation.', LOG_DEBUG);
+              payload_size  = __ciphertext.length;  // Record the number of bytes to modulate.
+              if (compress) {
+                var pt_len    = __plaintext.length;
+                var comp_len  = compressed.length;
+                log_error('Compressed '+pt_len+' bytes into '+comp_len+'.', LOG_INFO);
+              }
+              if (store_filename) {
+                log_error('Prepended filename to plaintext: '+__file_name_info, LOG_INFO);
+              }
+              log_error('Encrypted payload with header is '+payload_size+' bytes.', LOG_INFO);
+              return_value = true;
+            }
+            else log_error('Failed to pack checksum into payload.', LOG_ERR);
+          }
+          else log_error('Failed to pack ciphertext into payload.', LOG_ERR);
+        }
+        else log_error('Failed to pack IV into payload.', LOG_ERR);
+      }
+      else log_error('Failed to pack length into payload.', LOG_ERR);
     }
-    if (store_filename) {
-      log_error('Prepended filename to plaintext: '+__file_name_info, LOG_INFO);
-    }
+    else log_error('Failed to pack header into payload.', LOG_ERR);
     return return_value;
   }
 
