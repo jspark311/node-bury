@@ -6,8 +6,8 @@ var options = {
   enableGreen:    true,
   enableBlue:     true,
   compress:       false,
-  visibleResult:  false,
-  rescaleCarrier: true,
+  visibleResult:  true,
+  rescaleCarrier: false,
   storeFilename:  false
 };
 
