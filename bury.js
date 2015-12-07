@@ -164,8 +164,72 @@ var pad = function(str, len, pad, dir) {
     }
   }
   return str;
-}
+};
 
+
+var toByteArray = function(word_array) {
+  var byte_array = [];
+  for (var i = 0; i < word_array.length; i++) {
+    byte_array[i*4+0] = 0x000000FF & (word_array[i] >> 24);
+    byte_array[i*4+1] = 0x000000FF & (word_array[i] >> 16);
+    byte_array[i*4+2] = 0x000000FF & (word_array[i] >> 8);
+    byte_array[i*4+3] = 0x000000FF & (word_array[i]);
+  }
+  return byte_array;
+};
+
+
+/**
+* Given the password, derive the following parameters....
+*  0) Offset (in pixels)
+*  1) Hash round count.
+*  2) RNG seed
+*  3) Maximum stride range.
+*  4) Key material via the number from step 1.
+*
+* Without knowing the key, it should be made as difficult as possible to
+*  mine the resulting image for patterns, and it ought to be as unlikely
+*  as possible to guess it on accident.
+* 
+* NOTE: RNG implementation will affect the consistency of this function's output.
+*/
+var deriveParamsFromKey = function(pw) {
+  var params = {};
+  var t_initial = (new Date).getTime();
+
+  var hash      = CryptoJS.SHA256(pw);      // Give us back 32 bytes.
+  var hash_arr  = toByteArray(hash.words);  // Need to access it byte-wise...
+  params.offset = hash_arr[0];              // Where does the first header byte go?
+  params.max_stride = 2+(hash_arr[3] % 14); // Make sure max-stride falls between 2 and 16 pixels.
+  params.hash       = hash_arr;
+
+  // How many hash rounds should we run on the password? Limit it to 9000. 
+  // We don't want to go over 9000.
+  var rounds        = ((hash_arr[1] * 256) + hash_arr[2]) % 9000;
+
+  // Use the remaining bits to seed the RNG for arythmic stride.
+  var mixer_array  = [];
+  for (var i = 0; i < 7; i++) {
+    mixer_array[0]  = hash_arr[(i+4)]  ^ mixer_array[0];
+    mixer_array[1]  = hash_arr[(i+11)] ^ mixer_array[1];
+    mixer_array[2]  = hash_arr[(i+18)] ^ mixer_array[2];
+    mixer_array[3]  = hash_arr[(i+25)] ^ mixer_array[3];
+  }
+  
+  // Recombine into a 32-bit integer...
+  params.stride_seed = (((mixer_array[0] *16777216) % 128) + (mixer_array[1] * 65536) + (mixer_array[2] * 256) + mixer_array[3]);
+
+  // Spin the password around for awhile...
+  for (var i = 0; i < rounds; i++) hash  = CryptoJS.SHA256(hash);
+
+  params.key  = toByteArray(hash.words);      // Now we have the 256-bit key.
+  params.ms_required = (new Date).getTime() - t_initial;
+  params.rounds      = rounds;
+  return params;
+};
+
+
+  
 
 
 // Instancing this object represents a full operation on a carrier. Either encrypting or decyrpting.
@@ -316,61 +380,6 @@ function Bury(carrier_path, password, options) {
   /**************************************************************************
   * These functions deal with deriving parameters from the key material.    *
   **************************************************************************/
-
-  var toByteArray = function(word_array) {
-    var byte_array = [];
-    for (var i = 0; i < word_array.length; i++) {
-      byte_array[i*4+0] = 0x000000FF & (word_array[i] >> 24);
-      byte_array[i*4+1] = 0x000000FF & (word_array[i] >> 16);
-      byte_array[i*4+2] = 0x000000FF & (word_array[i] >> 8);
-      byte_array[i*4+3] = 0x000000FF & (word_array[i]);
-    }
-    return byte_array;
-  }
-
-  /**
-  * Given the password, derive the following parameters....
-  *  0) Offset (in pixels)
-  *  1) Hash round count.
-  *  2) RNG seed
-  *  3) Maximum stride range.
-  *  4) Key material via the number from step 1.
-  *
-  * Without knowing the key, it should be made as difficult as possible to
-  *  mine the resulting image for patterns, and it ought to be as unlikely
-  *  as possible to guess it on accident.
-  */
-  var deriveParamsFromKey = function(pw) {
-    var t_initial = (new Date).getTime();
-
-    var hash      = CryptoJS.SHA256(pw);      // Give us back 32 bytes.
-    var hash_arr  = toByteArray(hash.words);  // Need to access it byte-wise...
-    __offset      = hash_arr[0];              // Where does the first header byte go?
-
-    // How many hash rounds should we run on the password? Limit it to 9000. We don't want to go over 9000.
-    var rounds    = ((hash_arr[1] * 256) + hash_arr[2]) % 9000;
-    __max_stride  = 2+(hash_arr[3] % 14);  // The maximum stride.
-
-    // Use the remaining bits to seed the RNG for arythmic stride.
-    var temp  = [];
-    for (var i = 0; i < 7; i++) {
-      temp[0]  = hash_arr[(i+4)]  ^ temp[0];
-      temp[1]  = hash_arr[(i+11)] ^ temp[1];
-      temp[2]  = hash_arr[(i+18)] ^ temp[2];
-      temp[3]  = hash_arr[(i+25)] ^ temp[3];
-      //log_error('RNG ['+(i+4)+', '+(i+11)+', '+(i+18)+', '+(i+25)+']');
-    }
-    log_error('Seed Prep: '+temp[0]+' '+temp[1]+' '+temp[2]+' '+temp[3]);
-    __stride_seed = (((temp[0] *16777216) % 128) + (temp[1] * 65536) + (temp[2] * 256) + temp[3]);
-
-    // Spin the password around for awhile...
-    for (var i = 0; i < rounds; i++) hash  = CryptoJS.SHA256(hash);
-    __key  = toByteArray(hash.words);      // Now we have the 256-bit key.
-    var t_final = (new Date).getTime();
-    var t_delta = t_final - t_initial;
-    log_error('Executed '+rounds+' rounds in ' + t_delta + 'ms.', LOG_INFO);
-  };
-
 
   /**
   * Projective function that will run the arythmic stride as far out as the carrier
@@ -917,7 +926,11 @@ function Bury(carrier_path, password, options) {
     console.log('Password is too short. You must supply a password with at least ' + MIN_PASS_LENGTH + ' characters.');
   }
   else {
-    deriveParamsFromKey(password);
+    var params = deriveParamsFromKey(password);
+    __key         = params.key;
+    __stride_seed = params.stride_seed;
+    __max_stride  = params.max_stride;
+    __offset      = params.offset;
   }
 
   /**
@@ -974,6 +987,7 @@ Bury.getVersion = function() {
 };
 
 
+
 /**
 * Takes two (or three) passwords and tests them for mutual compatibility. This is needed only in cases
 *  where you want to overlay more than one message (up to three, total) in the same carrier.
@@ -984,92 +998,70 @@ Bury.getVersion = function() {
 */
 Bury.testPasswordCompatibility = function(pass0, pass1, pass2) {
   var return_value  = false;
-  var hash0      = CryptoJS.SHA256(pass0);   // Give us back 32 bytes.
-  var hash_arr0  = toByteArray(hash0.words); // Need to access it byte-wise...
-  var offset0    = hash_arr0[0];             // Where does the first header byte go?
-  var max_stride0  = 2+((hash0[3] & 0xFF) % 14);
+  var params0   = {};
+  var params1   = {};
+  var params2   = {};
+  var strides0  = [];
+  var strides1  = [];
+  var strides2  = [];
 
-  var hash1      = CryptoJS.SHA256(pass1);   // Give us back 32 bytes.
-  var hash_arr1  = toByteArray(hash1.words); // Need to access it byte-wise...
-  var offset1    = hash_arr1[0];             // Where does the first header byte go?
-  var max_stride1  = 2+((hash1[3] & 0xFF) % 14);
+  params0 = deriveParamsFromKey(pass0);
+  console.log('pass0: "' + pass0 + '"');
+  console.log(JSON.stringify(params0, null, 2));
 
-  var hash2      = CryptoJS.SHA256(pass2);   // Give us back 32 bytes.
-  var hash_arr2  = toByteArray(hash2.words); // Need to access it byte-wise...
-  var offset2    = hash_arr2[0];             // Where does the first header byte go?
-  var max_stride2  = 2+((hash2[3] & 0xFF) % 14);
+  params1 = deriveParamsFromKey(pass1);
+  console.log('pass1: "' + pass1 + '"');
+  console.log(JSON.stringify(params1, null, 2));
 
-  // Use the remaining bits to seed the RNG for arythmic stride.
-  var temp  = array(0,0,0,0);
-  for (var i = 0; i < 7; i++) {
-    temp[0]  = hash0[(i+4)]  ^ temp[0];
-    temp[1]  = hash0[(i+11)] ^ temp[1];
-    temp[2]  = hash0[(i+18)] ^ temp[2];
-    temp[3]  = hash0[(i+25)] ^ temp[3];
+  var test_limit  = Math.max(params0.offset, params1.offset);
+  
+  if (pass2) {
+    params2 = deriveParamsFromKey(pass2);
+    console.log('pass2: "' + pass2 + '"');
+    console.log(JSON.stringify(params2, null, 2));
+    test_limit  = Math.max(test_limit, params2.offset);
   }
-  var stride_seed0 = (((temp[0] *16777216) % 128) + (temp[1] * 65536) + (temp[2] * 256) + temp[3]);
 
-  temp  = array(0,0,0,0);
-  for (var i = 0; i < 7; i++) {
-    temp[0]  = hash1[(i+4)]  ^ temp[0];
-    temp[1]  = hash1[(i+11)] ^ temp[1];
-    temp[2]  = hash1[(i+18)] ^ temp[2];
-    temp[3]  = hash1[(i+25)] ^ temp[3];
-  }
-  var stride_seed1 = (((temp[0] *16777216) % 128) + (temp[1] * 65536) + (temp[2] * 256) + temp[3]);
+  console.log('The test only needs to find strides up to ' + test_limit + ' bytes.');
+  
 
-  temp  = array(0,0,0,0);
-  for (var i = 0; i < 7; i++) {
-    temp[0]  = hash2[(i+4)]  ^ temp[0];
-    temp[1]  = hash2[(i+11)] ^ temp[1];
-    temp[2]  = hash2[(i+18)] ^ temp[2];
-    temp[3]  = hash2[(i+25)] ^ temp[3];
-  }
-  var stride_seed2 = (((temp[0] *16777216) % 128) + (temp[1] * 65536) + (temp[2] * 256) + temp[3]);
-
-  var strides0  = array();
-  var strides1  = array();
-  var strides2  = array();
-
-  var test_limit  = (pass2) ? max(offset0, offset1, offset2) : max(offset0, offset1);
-
-  rng.seed(stride_seed0);
+  rng.seed(params0.stride_seed);
   var i = 0;
-  var n = offset0;
+  var n = params0.offset;
   while (n < test_limit) {
-    n += rng.rand(max_stride0);
+    n += rng.rand(params0.max_stride);
     strides0.push(n);
   }
 
-  rng.seed(stride_seed1);
+  rng.seed(params1.stride_seed);
   i = 0;
-  n = offset1;
+  n = params1.offset;;
   while (n < test_limit) {
-    n += rng.rand(max_stride1);
+    n += rng.rand(params1.max_stride);
     strides1.push(n);
   }
 
-  rng.seed(stride_seed2);
-  i = 0;
-  n = offset2;
-  while (n < test_limit) {
-    n += rng.rand(max_stride2);
-    strides2.push(n);
-  }
-
   if (pass2) {
-    if ((strides1.indexOf(offset2) >= 0) || (strides0.indexOf(offset2) >= 0)) {
+    rng.seed(params2.stride_seed);
+    i = 0;
+    n = params2.offset;;
+    while (n < test_limit) {
+      n += rng.rand(params2.max_stride);
+      strides2.push(n);
     }
-    else if ((strides2.indexOf(offset1) >= 0) || (strides0.indexOf(offset1) >= 0)) {
+
+    if ((strides1.indexOf(params2.offset) >= 0) || (strides0.indexOf(params2.offset) >= 0)) {
     }
-    else if ((strides1.indexOf(offset0) >= 0) || (strides2.indexOf(offset0) >= 0)) {
+    else if ((strides2.indexOf(params1.offset) >= 0) || (strides0.indexOf(params1.offset) >= 0)) {
+    }
+    else if ((strides1.indexOf(params0.offset) >= 0) || (strides2.indexOf(params0.offset) >= 0)) {
     }
     else {
       return_value  = true;
     }
   }
   else {
-    if ((strides1.indexOf(offset0) >= 0) || (strides0.indexOf(offset1) >= 0)) {
+    if ((strides1.indexOf(params0.offset) >= 0) || (strides0.indexOf(params1.offset) >= 0)) {
     }
     else {
       return_value  = true;
