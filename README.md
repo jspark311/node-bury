@@ -60,6 +60,19 @@ Comments and issues posted on github will be answered. Pull-requests are always 
     var test_readback = new Bury('./test_carrier.png', 'saddroPs');
     console.log(test_readback.getMessage());
 
+##### Testing passwords for mutual compatibility
+    var Bury = require('bury');
+
+    // testPasswordCompatibility() returns 'true' if the provided passwords are mutually compatible.
+    //   'false' otherwise. The function requires at least two passwords. Maximum of three, because we
+    //   can only have (at maximum) three independent channels.
+
+    console.log('Are these passwords compatible? ' + 
+      Bury.testPasswordCompatibility('key_for_steg-img.php', 'key_for_form.php'));
+
+    console.log('Are these passwords compatible? ' + 
+      Bury.testPasswordCompatibility('one-of-thess-passwords', 'is-not-mutally', 'compatible'));
+
 
 ### Compatibility note
 
@@ -71,7 +84,7 @@ Just sayin'...
 
 
 ### TODO
-  * Compression is untested.
+  * Compression is broken at the moment.
 
   * File-embedding is untested.
 
