@@ -4,17 +4,17 @@
 * Date:    2015.11.19
 *
 * Copyright (c) 2015 J. Ian Lindsay
-* 
+*
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
 * in the Software without restriction, including without limitation the rights
 * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 * copies of the Software, and to permit persons to whom the Software is
 * furnished to do so, subject to the following conditions:
-* 
+*
 * The above copyright notice and this permission notice shall be included in
 * all copies or substantial portions of the Software.
-* 
+*
 * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
@@ -29,7 +29,7 @@
 *
 * This library is meant to embed an encrypted message into the noise-floor of a carrier image.
 *  The message is first compressed, then encrypted, then treated as a bitstream and modulated into
-*  the carrier. The data to be written to the carrier is organized like this....        
+*  the carrier. The data to be written to the carrier is organized like this....
 *
 *       +--------+------------------------+----------+
 *       | HEADER | MESSAGE DATA           | CHECKSUM |
@@ -95,7 +95,7 @@
 *   prepended to the data before compression (and therefore, before encryption as well). The file extension (if present)
 *   will be preserved, regardless of padding and truncation of the rest of the filename.
 *
-*  When the decrypting party successfully decodes the message, they can set $write_file = $path-to-dir, and the file will be
+*  When the decrypting party successfully decodes the message, they can set write_file = path-to-dir, and the file will be
 *   re-consituted on their filesystem. This is DANGEROUS on webservers running this code, as an attacker could bypass many
 *   security layers related to file uploads. Then again... you can also leverage it to your advantage (putting back-doors
 *   for arbitrary script into your systems).
@@ -120,7 +120,7 @@ var compressjs = require('compressjs');   // Compression library.
 var CryptoJS   = require("crypto-js");    // Hash
 var rng        = require('mersenne');     // We can't seed Math.random().
 
-var bzip2      = compressjs.bzip2;
+var bzip2      = compressjs.Bzip2;
 
 // These are global constants for the library.
 var VERSION_CODE    = 0x02;   // The version of the program. Will be included in the carrier.
@@ -134,6 +134,38 @@ var LOG_ERR   = 2;
 var STR_PAD_LEFT  = 1;
 var STR_PAD_RIGHT = 2;
 var STR_PAD_BOTH  = 3;
+
+
+/*
+*  Thanks, David (from StackOverflow)
+*  http://stackoverflow.com/users/60682/david
+*  Modified somewhat. Original was...
+*
+*  Javascript string pad
+*  http://www.webtoolkit.info/
+*/
+var pad = function(str, len, pad, dir) {
+  if (typeof(len) == "undefined") { var len = 32;  }
+  if (typeof(pad) == "undefined") { var pad = ' '; }
+  if (typeof(dir) == "undefined") { var dir = STR_PAD_LEFT; }
+  if (len + 1 >= str.length) {
+    switch (dir){
+      case STR_PAD_LEFT:
+        str = Array(len + 1 - str.length).join(pad) + str;
+        break;
+      case STR_PAD_BOTH:
+        var right = Math.ceil((padlen = len - str.length) / 2);
+        var left = padlen - right;
+        str = Array(left+1).join(pad) + str + Array(right+1).join(pad);
+        break;
+      default:
+        str = str + Array(len + 1 - str.length).join(pad);
+        break;
+    }
+  }
+  return str;
+}
+
 
 
 // Instancing this object represents a full operation on a carrier. Either encrypting or decyrpting.
@@ -438,23 +470,25 @@ function Bury(carrier_path, password, options) {
       __plaintext  = __file_name_info + __plaintext;
     }
 
+    __plaintext = __plaintext.toString('binary');
+
     var nu_iv      = aes_cipher.generateIv();
 
-    var compressed = (compress) ? bzip2.compressFile(__plaintext, 9) : __plaintext;
-    aes_cipher.open(new Buffer(__key));
-    var encrypted  = aes_cipher.encrypt(compressed);
+    var compressed = (compress) ? bzip2.compressBlock(__plaintext, __plaintext.length, 9) : __plaintext;
+    aes_cipher.open(new Buffer(__key, 'binary'));
+    var encrypted  = aes_cipher.encrypt(new Buffer(compressed, 'binary'));
 
     var checksum  = toByteArray(CryptoJS.MD5(encrypted).words);
     var message_params  = message_params | ((compress)       ? 0x01:0x00);
         message_params  = message_params | ((store_filename) ? 0x04:0x00);
 
     var payload_length = (encrypted.length + aes_cipher.getIvSize() + checksum.length);
-    __ciphertext  = new Buffer(payload_length + HEADER_LENGTH);
+    __ciphertext  = new Buffer(payload_length + HEADER_LENGTH, 'binary');
     //console.log(JSON.stringify(__ciphertext, null, 3));
     if (binbuf.packTo('<HxBx', __ciphertext, 0, [VERSION_CODE, message_params])) {
       if (binbuf.packTo('>I',  __ciphertext, 5, [payload_length])) {
-        if (binbuf.packTo(aes_cipher.getIvSize()+'B', __ciphertext, 9, nu_iv)) {
-          if (binbuf.packTo(encrypted.length+'B', __ciphertext, (9+aes_cipher.getIvSize()), encrypted)) {
+        if (binbuf.packTo(aes_cipher.getIvSize()+'B', __ciphertext, HEADER_LENGTH, nu_iv.toString('binary'))) {
+          if (binbuf.packTo(encrypted.length+'B', __ciphertext, (HEADER_LENGTH+aes_cipher.getIvSize()), encrypted)) {
             if (binbuf.packTo(checksum.length+'B', __ciphertext, payload_length-16, checksum)) {
               log_error('Packed payload. Ready for modulation.', LOG_DEBUG);
               payload_size  = __ciphertext.length;  // Record the number of bytes to modulate.
@@ -605,12 +639,12 @@ function Bury(carrier_path, password, options) {
     __iv_size  = aes_cipher.getIvSize();    // We need the size of the IV...
     var nu_iv  = __ciphertext.slice(0, __iv_size);
 
-    var ct     = __ciphertext.slice(__iv_size);
-    aes_cipher.open(new Buffer(__key), new Buffer(nu_iv));
-    var decrypted     = aes_cipher.decrypt(new Buffer(ct));
+    var ct     = __ciphertext.slice(__iv_size, __iv_size + payload_size + HEADER_LENGTH);
+    aes_cipher.open(new Buffer(__key, 'binary'), new Buffer(nu_iv, 'binary'));
+    var decrypted     = aes_cipher.decrypt(new Buffer(ct, 'binary'));
     var decompressed  = (compress) ? bzip2.decompressFile(decrypted) : decrypted;
-    __file_name_info  = store_filename ? decompressed.slice(0, 32).toString().trim() : '';
-    __plaintext       = store_filename ? decompressed.slice(32).toString().trim() : decompressed.toString();
+    __file_name_info  = store_filename ? decompressed.slice(0, 32).toString('binary').trim() : '';
+    __plaintext       = store_filename ? decompressed.slice(32).toString('binary').trim() : decompressed.toString('binary').trim();
 
     if (compress) log_error('Compression inflated '+decrypted.length+' bytes into '+decompressed.length+' bytes.', LOG_INFO);
     if (store_filename) log_error('Retrieved file name: '+__file_name_info, LOG_INFO);
@@ -678,7 +712,7 @@ function Bury(carrier_path, password, options) {
     // First, we need to find the header...
     var ver  = binbuf.unpack('<H', bytes, 0);
     var msg_params   = binbuf.unpack('<B', bytes, 3);
-    var payload_size = binbuf.unpack('>I', bytes, 5);
+    payload_size = binbuf.unpack('>I', bytes, 5);
 
     compress        = (msg_params & 0x0001) ? true : false;
     store_filename  = (msg_params & 0x0004) ? true : false;
@@ -748,12 +782,12 @@ function Bury(carrier_path, password, options) {
         //if (fs.lstatSync(message).isFile()) {
         if (false) {  // TODO: Obviously not fully-ported...
           log_error('Message looks like a path to a file.', LOG_INFO);
-    //       if (is_readable($message)) {
+    //       if (is_readable(message)) {
             __plaintext  = fs.readFileSync(message);
             if (store_filename) {
-              if (name_override) $message  = name_override;    // Facilitates HTML forms.
+              if (name_override) message  = name_override;    // Facilitates HTML forms.
 
-              var base  = basename($message);
+              var base  = basename(message);
               __file_name_info  = normalize_filename(base);
               log_error('Will use filename: '+__file_name_info, LOG_INFO);
             }
@@ -763,7 +797,10 @@ function Bury(carrier_path, password, options) {
         }
         else if (message.length > 0) {
           log_error('Message looks like a string.', LOG_INFO);
-          __plaintext  = message;
+          // Must pad the message...
+          var padded_len = Math.floor(message.length) + (message.length % 16) ? 16 : 0;
+          message = pad(message, padded_len, ' ', STR_PAD_RIGHT).toString('binary');
+          __plaintext  = new Buffer(message, 'binary');
           store_filename  = false;    // No need for this.
         }
         else log_error('Message must be either a path or a string.', LOG_ERR);
@@ -792,38 +829,6 @@ function Bury(carrier_path, password, options) {
       else log_error('Bad cipher/mode combination.', LOG_ERR);
     }
     return return_value;
-  }
-
-  /*
-  *  Thanks, David (from StackOverflow)
-  *  http://stackoverflow.com/users/60682/david
-  *  Modified somewhat. Original was...
-  *
-  *  Javascript string pad
-  *  http://www.webtoolkit.info/
-  */
-  var pad = function(str, len, pad, dir) {
-    if (typeof(len) == "undefined") { var len = 32;  }
-    if (typeof(pad) == "undefined") { var pad = ' '; }
-    if (typeof(dir) == "undefined") { var dir = STR_PAD_LEFT; }
-
-    if (len + 1 >= str.length) {
-      switch (dir){
-        case STR_PAD_LEFT:
-          str = Array(len + 1 - str.length).join(pad) + str;
-          break;
-
-        case STR_PAD_BOTH:
-          var right = Math.ceil((padlen = len - str.length) / 2);
-          var left = padlen - right;
-          str = Array(left+1).join(pad) + str + Array(right+1).join(pad);
-          break;
-        default:
-          str = str + Array(len + 1 - str.length).join(pad);
-          break;
-      }
-    }
-    return str;
   }
 
 
@@ -908,7 +913,6 @@ function Bury(carrier_path, password, options) {
   }
 
 
-
   if (password.length < MIN_PASS_LENGTH) {
     console.log('Password is too short. You must supply a password with at least ' + MIN_PASS_LENGTH + ' characters.');
   }
@@ -959,108 +963,119 @@ function Bury(carrier_path, password, options) {
   else {
     log_error('Bad path. Doesn\'t exist, or isn\'t a file.', LOG_ERR);
   }
-}
+};
 
 
+/**
+* Report our version.
+*/
+Bury.getVersion = function() {
+  return ('0x'+pad(VERSION_CODE.toString(16), 2, '0'));
+};
 
-///**
-//* Report our version.
-//*/
-//public static function getVersion() {
-//  return '0x'.sprintf("%02X", VERSION_CODE);
-//}
-///**
-//* Takes two (or three) passwords and tests them for mutual compatibility. This is needed only in cases
-//*  where you want to overlay more than one message (up to three, total) in the same carrier.
-//*  Returns true if the passwords are compatible. False otherwise.
-//*
-//* Compatibility is defined as the condition where no password results in an offset or a stride that overwrites
-//*  the first byte of a header from any other password.
-//*/
-//public static function testPasswordCompatibility($pass0, $pass1, $pass2 = false) {
-//  $return_value  = false;
-//  $hash0  = hash('sha256', $pass0, true);
-//  $hash1  = hash('sha256', $pass1, true);
-//  $hash2  = hash('sha256', $pass2, true);
-//  $hash_arr0  = str_split($hash0, 1);
-//  $hash_arr1  = str_split($hash1, 1);
-//  $hash_arr2  = str_split($hash2, 1);
-//  $offset0  = ord($hash_arr0[0]);
-//  $offset1  = ord($hash_arr1[0]);
-//  $offset2  = ord($hash_arr2[0]);
-//  $max_stride0  = 2+((ord($hash0[3]) & 0xFF) % 14);
-//  $max_stride1  = 2+((ord($hash1[3]) & 0xFF) % 14);
-//  $max_stride2  = 2+((ord($hash2[3]) & 0xFF) % 14);
-//  // Use the remaining bits to seed the RNG for arythmic stride.
-//  $temp  = array(0,0,0,0);
-//  for ($i = 0; $i < 7; $i++) {
-//    $temp[0]  = ord($hash0[($i+4)]) ^ $temp[0];
-//    $temp[1]  = ord($hash0[($i+11)]) ^ $temp[1];
-//    $temp[2]  = ord($hash0[($i+18)]) ^ $temp[2];
-//    $temp[3]  = ord($hash0[($i+25)]) ^ $temp[3];
-//  }
-//  $stride_seed0 = ((($temp[0] *16777216) % 128) + ($temp[1] * 65536) + ($temp[2] * 256) + $temp[3]);
-//  $temp  = array(0,0,0,0);
-//  for ($i = 0; $i < 7; $i++) {
-//    $temp[0]  = ord($hash1[($i+4)]) ^ $temp[0];
-//    $temp[1]  = ord($hash1[($i+11)]) ^ $temp[1];
-//    $temp[2]  = ord($hash1[($i+18)]) ^ $temp[2];
-//    $temp[3]  = ord($hash1[($i+25)]) ^ $temp[3];
-//  }
-//  $stride_seed1 = ((($temp[0] *16777216) % 128) + ($temp[1] * 65536) + ($temp[2] * 256) + $temp[3]);
-//  $temp  = array(0,0,0,0);
-//  for ($i = 0; $i < 7; $i++) {
-//    $temp[0]  = ord($hash2[($i+4)]) ^ $temp[0];
-//    $temp[1]  = ord($hash2[($i+11)]) ^ $temp[1];
-//    $temp[2]  = ord($hash2[($i+18)]) ^ $temp[2];
-//    $temp[3]  = ord($hash2[($i+25)]) ^ $temp[3];
-//  }
-//  $stride_seed2 = ((($temp[0] *16777216) % 128) + ($temp[1] * 65536) + ($temp[2] * 256) + $temp[3]);
-//  $strides0  = array();
-//  $strides1  = array();
-//  $strides2  = array();
-//  $test_limit  = ($pass2) ? max($offset0, $offset1, $offset2) : max($offset0, $offset1);
-//  mt_srand($stride_seed0);
-//  $i = 0;
-//  $n = $offset0;
-//  while ($n < $test_limit) {
-//    $n  += mt_rand(1, $max_stride0);
-//    $strides0[]  = $n;
-//  }
-//  mt_srand($stride_seed1);
-//  $i = 0;
-//  $n = $offset1;
-//  while ($n < $test_limit) {
-//    $n  += mt_rand(1, $max_stride1);
-//    $strides1[]  = $n;
-//  }
-//  mt_srand($stride_seed2);
-//  $i = 0;
-//  $n = $offset2;
-//  while ($n < $test_limit) {
-//    $n  += mt_rand(1, $max_stride2);
-//    $strides2[]  = $n;
-//  }
-//  if ($pass2) {
-//    if (in_array($offset2, $strides1) || in_array($offset2, $strides0)) {
-//    }
-//    else if (in_array($offset1, $strides2) || in_array($offset1, $strides0)) {
-//    }
-//    else if (in_array($offset0, $strides1) || in_array($offset0, $strides2)) {
-//    }
-//    else {
-//      $return_value  = true;
-//    }
-//  }
-//  else {
-//    if (in_array($offset0, $strides1) || in_array($offset1, $strides0)) {
-//    }
-//    else {
-//      $return_value  = true;
-//    }
-//  }
-//  return $return_value;
-//}
-//
+
+/**
+* Takes two (or three) passwords and tests them for mutual compatibility. This is needed only in cases
+*  where you want to overlay more than one message (up to three, total) in the same carrier.
+*  Returns true if the passwords are compatible. False otherwise.
+*
+* Compatibility is defined as the condition where no password results in an offset or a stride that overwrites
+*  the first byte of a header from any other password.
+*/
+Bury.testPasswordCompatibility = function(pass0, pass1, pass2) {
+  var return_value  = false;
+  var hash0      = CryptoJS.SHA256(pass0);   // Give us back 32 bytes.
+  var hash_arr0  = toByteArray(hash0.words); // Need to access it byte-wise...
+  var offset0    = hash_arr0[0];             // Where does the first header byte go?
+  var max_stride0  = 2+((hash0[3] & 0xFF) % 14);
+
+  var hash1      = CryptoJS.SHA256(pass1);   // Give us back 32 bytes.
+  var hash_arr1  = toByteArray(hash1.words); // Need to access it byte-wise...
+  var offset1    = hash_arr1[0];             // Where does the first header byte go?
+  var max_stride1  = 2+((hash1[3] & 0xFF) % 14);
+
+  var hash2      = CryptoJS.SHA256(pass2);   // Give us back 32 bytes.
+  var hash_arr2  = toByteArray(hash2.words); // Need to access it byte-wise...
+  var offset2    = hash_arr2[0];             // Where does the first header byte go?
+  var max_stride2  = 2+((hash2[3] & 0xFF) % 14);
+
+  // Use the remaining bits to seed the RNG for arythmic stride.
+  var temp  = array(0,0,0,0);
+  for (var i = 0; i < 7; i++) {
+    temp[0]  = hash0[(i+4)]  ^ temp[0];
+    temp[1]  = hash0[(i+11)] ^ temp[1];
+    temp[2]  = hash0[(i+18)] ^ temp[2];
+    temp[3]  = hash0[(i+25)] ^ temp[3];
+  }
+  var stride_seed0 = (((temp[0] *16777216) % 128) + (temp[1] * 65536) + (temp[2] * 256) + temp[3]);
+
+  temp  = array(0,0,0,0);
+  for (var i = 0; i < 7; i++) {
+    temp[0]  = hash1[(i+4)]  ^ temp[0];
+    temp[1]  = hash1[(i+11)] ^ temp[1];
+    temp[2]  = hash1[(i+18)] ^ temp[2];
+    temp[3]  = hash1[(i+25)] ^ temp[3];
+  }
+  var stride_seed1 = (((temp[0] *16777216) % 128) + (temp[1] * 65536) + (temp[2] * 256) + temp[3]);
+
+  temp  = array(0,0,0,0);
+  for (var i = 0; i < 7; i++) {
+    temp[0]  = hash2[(i+4)]  ^ temp[0];
+    temp[1]  = hash2[(i+11)] ^ temp[1];
+    temp[2]  = hash2[(i+18)] ^ temp[2];
+    temp[3]  = hash2[(i+25)] ^ temp[3];
+  }
+  var stride_seed2 = (((temp[0] *16777216) % 128) + (temp[1] * 65536) + (temp[2] * 256) + temp[3]);
+
+  var strides0  = array();
+  var strides1  = array();
+  var strides2  = array();
+
+  var test_limit  = (pass2) ? max(offset0, offset1, offset2) : max(offset0, offset1);
+
+  rng.seed(stride_seed0);
+  var i = 0;
+  var n = offset0;
+  while (n < test_limit) {
+    n += rng.rand(max_stride0);
+    strides0.push(n);
+  }
+
+  rng.seed(stride_seed1);
+  i = 0;
+  n = offset1;
+  while (n < test_limit) {
+    n += rng.rand(max_stride1);
+    strides1.push(n);
+  }
+
+  rng.seed(stride_seed2);
+  i = 0;
+  n = offset2;
+  while (n < test_limit) {
+    n += rng.rand(max_stride2);
+    strides2.push(n);
+  }
+
+  if (pass2) {
+    if ((strides1.indexOf(offset2) >= 0) || (strides0.indexOf(offset2) >= 0)) {
+    }
+    else if ((strides2.indexOf(offset1) >= 0) || (strides0.indexOf(offset1) >= 0)) {
+    }
+    else if ((strides1.indexOf(offset0) >= 0) || (strides2.indexOf(offset0) >= 0)) {
+    }
+    else {
+      return_value  = true;
+    }
+  }
+  else {
+    if ((strides1.indexOf(offset0) >= 0) || (strides0.indexOf(offset1) >= 0)) {
+    }
+    else {
+      return_value  = true;
+    }
+  }
+  return return_value;
+};
 
 module.exports = Bury;
