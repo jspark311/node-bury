@@ -32,7 +32,7 @@ Comments and issues posted on github will be answered. Pull-requests are always 
 
     git clone https://github.com/jspark311/node-bury.git
     cd node-bury
-    npm install
+    npm install bury
 
 ### Usage
 ##### Encrypting
@@ -94,9 +94,7 @@ Just sayin'...
 
   * It would be nice to be able to automatically write output files if such-and-such an option parameter is passed in at instantiation. The same goes for encrypting.
 
-  * Decrypting can (in principle) be done automatically, as with nothing more than the carrier and a password, a header can be discovered and the data retrieved. But, at present, you must make a separate function call.
-
-  * The PHP version was intended for use on a webserver, and therefore file-output was not the first priority. Here, the situation is reversed, and output files are the only thing I've tested. Still need to test some of the direct-output functions so that the results of encrypting can be served immediately to a web browser without having to pass through an intermediary file beforehand.
+  * Decrypting can (in principle) be done automatically. With nothing more than the carrier and a password, a header can be discovered and the data retrieved. But, at present, you must make a separate function call.
 
   * Write unit tests. Should be easy to do, since the criteria for success is unambiguous.
 
