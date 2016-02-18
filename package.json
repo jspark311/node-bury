@@ -24,6 +24,7 @@
     "bufferpack": "0.0.6",
     "compressjs": "^1.0.3",
     "crypto-js": "^3.1.5",
+    "mcrypt": "^0.1.9",
     "mersenne": "0.0.3",
     "node-gd": "^1.1.0"
   }

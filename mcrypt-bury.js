@@ -112,10 +112,10 @@
 * ============================================================================================================================
 */
 'use strict'
-var util       = require('util');         // TODO: Remove when done debugging.
 var fs         = require('fs');           // File i/o
 var gd         = require('node-gd');      // Image manipulation library.
 var binbuf     = require('bufferpack');   // Bleh... typelessness....
+var MCrypt     = require('mcrypt');       // Cryptograhy
 var compressjs = require('compressjs');   // Compression library.
 var CryptoJS   = require("crypto-js");    // Hash
 var rng        = require('mersenne');     // We can't seed Math.random().
@@ -166,10 +166,10 @@ var pad = function(str, len, pad, dir) {
   return str;
 };
 
+
 /**
  * The hash and crypto deal with word arrays. But for sanity's sake, we sometimes
  *   need to access them byte-wise.
- * Assumes big-endian.
  * @return an array of bytes.
  */
 var toByteArray = function(word_array) {
@@ -181,22 +181,6 @@ var toByteArray = function(word_array) {
     byte_array[i*4+3] = 0x000000FF & (word_array[i]);
   }
   return byte_array;
-};
-
-/* Assumes big-endian. */
-var toWordArray = function(byte_array) {
-  var word_array = [];
-  var temp_word  = 0;
-  var w          = 0;
-  for (var i = 0; i < byte_array.length; i++) {
-    temp_word += byte_array[i] << ((3-(i%4))*8);
-    if (3 == i%4) {
-      // This is the end of a word.
-      word_array[w++] = temp_word;
-      temp_word       = 0;
-    }
-  }
-  return word_array;
 };
 
 /*
@@ -255,7 +239,7 @@ var normalize_filename = function(base_name) {
 * Without knowing the key, it should be made as difficult as possible to
 *  mine the resulting image for patterns, and it ought to be as unlikely
 *  as possible to guess it on accident.
-*
+* 
 * NOTE: RNG implementation will affect the consistency of this function's output.
 */
 var deriveParamsFromKey = function(pw) {
@@ -268,7 +252,7 @@ var deriveParamsFromKey = function(pw) {
   params.max_stride = 2+(hash_arr[3] % 14); // Make sure max-stride falls between 2 and 16 pixels.
   params.hash       = hash_arr;
 
-  // How many hash rounds should we run on the password? Limit it to 9000.
+  // How many hash rounds should we run on the password? Limit it to 9000. 
   // We don't want to go over 9000.
   var rounds        = ((hash_arr[1] * 256) + hash_arr[2]) % 9000;
 
@@ -280,7 +264,7 @@ var deriveParamsFromKey = function(pw) {
     mixer_array[2]  = hash_arr[(i+18)] ^ mixer_array[2];
     mixer_array[3]  = hash_arr[(i+25)] ^ mixer_array[3];
   }
-
+  
   // Recombine into a 32-bit integer...
   params.stride_seed = (((mixer_array[0] *16777216) % 128) + (mixer_array[1] * 65536) + (mixer_array[2] * 256) + mixer_array[3]);
 
@@ -294,7 +278,7 @@ var deriveParamsFromKey = function(pw) {
 };
 
 
-
+  
 
 
 /**
@@ -324,12 +308,12 @@ function Bury(carrier_path, password, options) {
 
     // Should the output image be scaled to a minimum-size needed to fit the message?
     var rescaleCarrier  = options.hasOwnProperty('rescaleCarrier') ? options.rescaleCarrier    : true;
-
+    
     // If supplied, this function will be called when there is a result ready.
     var callback        = options.hasOwnProperty('callback')       ? options.callback          : false;
 
     // DEBUG OPTION    How noisy should this class be about what it's doing?
-    var verbosity       = options.hasOwnProperty('verbosity')      ? options.verbosity         : LOG_DEBUG;
+    var verbosity       = options.hasOwnProperty('verbosity')      ? options.verbosity         : LOG_INFO;
 
   /* These options apply to treatment of filenames for embedded files. */
     // Encrypt only: If the user sets this to false, we will not store file information.
@@ -376,13 +360,20 @@ function Bury(carrier_path, password, options) {
     if (v <= verbosity) console.log(body);
   };
 
+
+  /*
+  * Alrighty.... Let's setup crypto stuff...
+  */
+  var aes_cipher = new MCrypt.MCrypt('rijndael-128', 'cbc');
+
+
   /**
   * Call to shink the carrier to the minimum size required to store the bitstream.
   *  Replaces the carrier image with the rescaled version.
   *  Maintains aspect ratio.
   *  Checks for adequate size.
   *  Regenerates strides.
-  *
+  * 
   * Returns true on success, false on failure.
   */
   var rescale_carrier = function() {
@@ -545,49 +536,39 @@ function Bury(carrier_path, password, options) {
 
     __plaintext = __plaintext.toString('binary');
 
+    var nu_iv      = aes_cipher.generateIv();
+
     var compressed = (compress) ? bzip2.compressBlock(__plaintext, __plaintext.length, 9) : __plaintext;
-
-    var cipherObj  = CryptoJS.AES.encrypt(
-      compressed.toString('binary'),
-      __key.toString('binary'),
-      { mode: CryptoJS.mode.CFB,
-        padding: CryptoJS.pad.ZeroPadding
-      }
-    );
-
-    var nu_iv = toByteArray(cipherObj.iv.words);
-    var encrypted = toByteArray(cipherObj.ciphertext.words);
-
-    //console.log(util.inspect(cipherObj.iv.words));
-    //console.log(util.inspect(nu_iv));
-    //console.log(util.inspect(toWordArray(nu_iv)));
+    aes_cipher.open(new Buffer(__key, 'binary'), nu_iv);
+    var encrypted  = aes_cipher.encrypt(new Buffer(compressed, 'binary'));
 
     var checksum  = toByteArray(CryptoJS.MD5(encrypted).words);
     var message_params  = message_params | ((compress)       ? 0x01:0x00);
         message_params  = message_params | ((store_filename) ? 0x04:0x00);
 
-    var payload_length = (encrypted.length + nu_iv.length + checksum.length);
+    var payload_length = (encrypted.length + aes_cipher.getIvSize() + checksum.length);
     __ciphertext  = new Buffer(payload_length + HEADER_LENGTH, 'binary');
-    //console.log(JSON.stringify(__ciphertext, null, 3));
     if (binbuf.packTo('<HxBx', __ciphertext, 0, [VERSION_CODE, message_params])) {
       if (binbuf.packTo('>I',  __ciphertext, 5, [payload_length])) {
-        if (binbuf.packTo(nu_iv.length+'B', __ciphertext, HEADER_LENGTH, nu_iv.toString('binary'))) {
-          if (binbuf.packTo(encrypted.length+'B', __ciphertext, (HEADER_LENGTH+nu_iv.length), encrypted)) {
-            if (binbuf.packTo(checksum.length+'B', __ciphertext, payload_length-16, checksum)) {
-              log_error('Packed payload. Ready for modulation.', LOG_DEBUG);
-              __payload_size  = __ciphertext.length;  // Record the number of bytes to modulate.
-              if (compress) {
-                var pt_len    = __plaintext.length;
-                var comp_len  = compressed.length;
-                log_error('Compressed '+pt_len+' bytes into '+comp_len+'.', LOG_INFO);
-              }
-              if (store_filename) {
-                log_error('Prepended filename to plaintext: '+__file_name_info, LOG_INFO);
-              }
-              log_error('Encrypted payload with header is '+__payload_size+' bytes.', LOG_INFO);
-              return_value = true;
+        if (binbuf.packTo(aes_cipher.getIvSize()+'B', __ciphertext, HEADER_LENGTH, nu_iv)) {
+          log_error('nu_iv:     '+JSON.stringify(nu_iv)+'\n\n', LOG_DEBUG);
+          log_error('encrypted: '+JSON.stringify(encrypted)+'\n\n', LOG_DEBUG);
+          log_error('checksum:  '+JSON.stringify(new Buffer(checksum))+'\n\n', LOG_DEBUG);
+          var merged = Buffer.concat([encrypted, new Buffer(checksum)])
+          if (binbuf.packTo(merged.length+'B', __ciphertext, (HEADER_LENGTH+aes_cipher.getIvSize()), merged)) {
+            log_error('Packed payload. Ready for modulation.', LOG_INFO);
+            log_error('__ciphertext:  '+JSON.stringify(__ciphertext)+'\n\n', LOG_DEBUG);
+            __payload_size  = __ciphertext.length;  // Record the number of bytes to modulate.
+            if (compress) {
+              var pt_len    = __plaintext.length;
+              var comp_len  = compressed.length;
+              log_error('Compressed '+pt_len+' bytes into '+comp_len+'.', LOG_INFO);
             }
-            else log_error('Failed to pack checksum into payload.', LOG_ERR);
+            if (store_filename) {
+              log_error('Prepended filename to plaintext: '+__file_name_info, LOG_INFO);
+            }
+            log_error('Encrypted payload with header is '+__payload_size+' bytes.', LOG_INFO);
+            return_value = true;
           }
           else log_error('Failed to pack ciphertext into payload.', LOG_ERR);
         }
@@ -720,18 +701,14 @@ function Bury(carrier_path, password, options) {
   */
   var decrypt = function() {
     var return_value  = true;
-    __iv_size  = 16;           // We need the size of the IV...
+    __iv_size  = aes_cipher.getIvSize();    // We need the size of the IV...
     var nu_iv  = __ciphertext.slice(0, __iv_size);
 
-    var ct     = __ciphertext.slice(__iv_size);
-    var decrypted     = CryptoJS.AES.decrypt(
-      ct.toString('binary'),
-      __key,
-      {iv: nu_iv}
-    );
-
-    //console.log(util.inspect(decrypted))
-
+    var ct     = __ciphertext.slice(__iv_size, __iv_size + __payload_size + HEADER_LENGTH);
+    aes_cipher.open(new Buffer(__key, 'binary'), new Buffer(nu_iv, 'binary'));
+    log_error('nu_iv:  '+JSON.stringify(nu_iv)+'\n\n', LOG_DEBUG);
+    log_error('ct:     '+JSON.stringify(ct)+'\n\n', LOG_DEBUG);
+    var decrypted     = aes_cipher.decrypt(new Buffer(ct, 'binary'), {iv: nu_iv});
     var decompressed  = (compress) ? bzip2.decompressFile(decrypted) : decrypted;
     __file_name_info  = store_filename ? decompressed.slice(0, 32).toString('binary').trim() : '';
     __plaintext       = store_filename ? decompressed.slice(32).toString('binary').trim() : decompressed.toString('binary').trim();
@@ -871,7 +848,7 @@ function Bury(carrier_path, password, options) {
 
     // If we loaded a message successfully, try to encrypt it and fit it into the carrier.
     if (__plaintext.length > 0) {
-      __iv_size  = 16;    // We need the size of the IV...
+      __iv_size  = aes_cipher.getIvSize();    // We need the size of the IV...
       if (__iv_size) {
         if (encrypt()) {
           if (__payload_size <= __max_size) {
@@ -1050,7 +1027,7 @@ Bury.testPasswordCompatibility = function(pass0, pass1, pass2) {
   console.log(JSON.stringify(params1, null, 2));
 
   var test_limit  = Math.max(params0.offset, params1.offset);
-
+  
   if (pass2) {
     params2 = deriveParamsFromKey(pass2);
     test_limit  = Math.max(test_limit, params2.offset);
@@ -1059,7 +1036,7 @@ Bury.testPasswordCompatibility = function(pass0, pass1, pass2) {
   }
 
   console.log('The test only needs to find strides up to ' + test_limit + ' bytes.');
-
+  
   rng.seed(params0.stride_seed);
   var i = 0;
   var n = params0.offset;
