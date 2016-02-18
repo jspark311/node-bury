@@ -1,4 +1,4 @@
-var Bury = require('./bury.js');
+var Bury = require('./mcrypt-bury.js');
 
 var options = {
   enableRed:      true,
@@ -13,5 +13,5 @@ var options = {
 var test_image = new Bury('./test_carrier.jpg', 'saddroPs', options);
 
 // Encrypting
-test_image.setMessage('This is a silly test message that the NSA will spend millions of dollars to unearth.');
+test_image.setMessage('./Rage_face.png');
 console.log(test_image.outputImage('./test_carrier.png'));

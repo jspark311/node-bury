@@ -166,6 +166,7 @@ var pad = function(str, len, pad, dir) {
   return str;
 };
 
+
 /**
  * The hash and crypto deal with word arrays. But for sanity's sake, we sometimes
  *   need to access them byte-wise.
@@ -329,7 +330,7 @@ function Bury(carrier_path, password, options) {
     var callback        = options.hasOwnProperty('callback')       ? options.callback          : false;
 
     // DEBUG OPTION    How noisy should this class be about what it's doing?
-    var verbosity       = options.hasOwnProperty('verbosity')      ? options.verbosity         : LOG_DEBUG;
+    var verbosity       = options.hasOwnProperty('verbosity')      ? options.verbosity         : LOG_INFO;
 
   /* These options apply to treatment of filenames for embedded files. */
     // Encrypt only: If the user sets this to false, we will not store file information.
@@ -839,8 +840,7 @@ function Bury(carrier_path, password, options) {
     var return_value  = false;
     if (message) {
       if (__plaintext.length == 0) {
-        //if (fs.lstatSync(message).isFile()) {
-        if (false) {  // TODO: Obviously not fully-ported...
+        if (fs.lstatSync(message).isFile()) {
           log_error('Message looks like a path to a file.', LOG_INFO);
     //       if (is_readable(message)) {
             __plaintext  = fs.readFileSync(message);

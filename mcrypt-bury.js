@@ -170,6 +170,7 @@ var pad = function(str, len, pad, dir) {
 /**
  * The hash and crypto deal with word arrays. But for sanity's sake, we sometimes
  *   need to access them byte-wise.
+ * Assumes big-endian.
  * @return an array of bytes.
  */
 var toByteArray = function(word_array) {
@@ -181,6 +182,22 @@ var toByteArray = function(word_array) {
     byte_array[i*4+3] = 0x000000FF & (word_array[i]);
   }
   return byte_array;
+};
+
+/* Assumes big-endian. */
+var toWordArray = function(byte_array) {
+  var word_array = [];
+  var temp_word  = 0;
+  var w          = 0;
+  for (var i = 0; i < byte_array.length; i++) {
+    temp_word += byte_array[i] << ((3-(i%4))*8);
+    if (3 == i%4) {
+      // This is the end of a word.
+      word_array[w++] = temp_word;
+      temp_word       = 0;
+    }
+  }
+  return word_array;
 };
 
 /*
@@ -239,7 +256,7 @@ var normalize_filename = function(base_name) {
 * Without knowing the key, it should be made as difficult as possible to
 *  mine the resulting image for patterns, and it ought to be as unlikely
 *  as possible to guess it on accident.
-* 
+*
 * NOTE: RNG implementation will affect the consistency of this function's output.
 */
 var deriveParamsFromKey = function(pw) {
@@ -252,7 +269,7 @@ var deriveParamsFromKey = function(pw) {
   params.max_stride = 2+(hash_arr[3] % 14); // Make sure max-stride falls between 2 and 16 pixels.
   params.hash       = hash_arr;
 
-  // How many hash rounds should we run on the password? Limit it to 9000. 
+  // How many hash rounds should we run on the password? Limit it to 9000.
   // We don't want to go over 9000.
   var rounds        = ((hash_arr[1] * 256) + hash_arr[2]) % 9000;
 
@@ -264,7 +281,7 @@ var deriveParamsFromKey = function(pw) {
     mixer_array[2]  = hash_arr[(i+18)] ^ mixer_array[2];
     mixer_array[3]  = hash_arr[(i+25)] ^ mixer_array[3];
   }
-  
+
   // Recombine into a 32-bit integer...
   params.stride_seed = (((mixer_array[0] *16777216) % 128) + (mixer_array[1] * 65536) + (mixer_array[2] * 256) + mixer_array[3]);
 
@@ -278,7 +295,7 @@ var deriveParamsFromKey = function(pw) {
 };
 
 
-  
+
 
 
 /**
@@ -308,7 +325,7 @@ function Bury(carrier_path, password, options) {
 
     // Should the output image be scaled to a minimum-size needed to fit the message?
     var rescaleCarrier  = options.hasOwnProperty('rescaleCarrier') ? options.rescaleCarrier    : true;
-    
+
     // If supplied, this function will be called when there is a result ready.
     var callback        = options.hasOwnProperty('callback')       ? options.callback          : false;
 
@@ -373,7 +390,7 @@ function Bury(carrier_path, password, options) {
   *  Maintains aspect ratio.
   *  Checks for adequate size.
   *  Regenerates strides.
-  * 
+  *
   * Returns true on success, false on failure.
   */
   var rescale_carrier = function() {
@@ -816,8 +833,7 @@ function Bury(carrier_path, password, options) {
     var return_value  = false;
     if (message) {
       if (__plaintext.length == 0) {
-        //if (fs.lstatSync(message).isFile()) {
-        if (false) {  // TODO: Obviously not fully-ported...
+        if (fs.lstatSync(message).isFile()) {
           log_error('Message looks like a path to a file.', LOG_INFO);
     //       if (is_readable(message)) {
             __plaintext  = fs.readFileSync(message);
@@ -1027,7 +1043,7 @@ Bury.testPasswordCompatibility = function(pass0, pass1, pass2) {
   console.log(JSON.stringify(params1, null, 2));
 
   var test_limit  = Math.max(params0.offset, params1.offset);
-  
+
   if (pass2) {
     params2 = deriveParamsFromKey(pass2);
     test_limit  = Math.max(test_limit, params2.offset);
@@ -1036,7 +1052,7 @@ Bury.testPasswordCompatibility = function(pass0, pass1, pass2) {
   }
 
   console.log('The test only needs to find strides up to ' + test_limit + ' bytes.');
-  
+
   rng.seed(params0.stride_seed);
   var i = 0;
   var n = params0.offset;
