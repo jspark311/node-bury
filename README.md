@@ -42,10 +42,8 @@ Comments and issues posted on github will be answered. Pull-requests are always 
       enableRed:      true,
       enableGreen:    true,
       enableBlue:     true,
-      compress:       false,
       visibleResult:  false,
-      rescaleCarrier: true,
-      storeFilename:  false
+      rescaleCarrier: true
     };
 
     var test_image = new Bury('./test_carrier.jpg', 'saddroPs', options);

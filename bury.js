@@ -112,13 +112,13 @@
 * ============================================================================================================================
 */
 'use strict'
-var util       = require('util');         // TODO: Remove when done debugging.
 var fs         = require('fs');           // File i/o
 var gd         = require('node-gd');      // Image manipulation library.
-var binbuf     = require('bufferpack');   // Bleh... typelessness....
-var compressjs = require('compressjs');   // Compression library.
+var binbuf     = require('bufferpack');   // Bleh... typelessness.... TODO: Node buffers make this superfluous.
 var CryptoJS   = require("crypto-js");    // Hash
-var rng        = require('mersenne');     // We can't seed Math.random().
+var MCrypt     = require('mcrypt');       // Cryptograhy. TODO: Remove this and use crypto-js exclusively.
+var compressjs = require('compressjs');   // Compression library. TODO: Library inadequate. No blockCompress.
+var rng        = require('mersenne');     // We can't seed Math.random(). This breaks compat with the PHP implementation.
 
 var bzip2      = compressjs.Bzip2;
 
@@ -313,31 +313,27 @@ function Bury(carrier_path, password, options) {
     // Enabled carrier channels. No alpha support due to it standing out like a flare that says: 'ANOMALY!'.
     // It should also be noted that not using all of the channels makes the statistical profile of the
     //   noise asymetrical. No human being could ever see this with their eyes, but a machine might.
-    var enableRed       = options.hasOwnProperty('enableRed')      ? options.enableRed         : true;
-    var enableGreen     = options.hasOwnProperty('enableGreen')    ? options.enableGreen       : true;
-    var enableBlue      = options.hasOwnProperty('enableBlue')     ? options.enableBlue        : true;
+    var enableRed      = options.hasOwnProperty('enableRed')      ? options.enableRed         : true;
+    var enableGreen    = options.hasOwnProperty('enableGreen')    ? options.enableGreen       : true;
+    var enableBlue     = options.hasOwnProperty('enableBlue')     ? options.enableBlue        : true;
 
     // DEBUG OPTION    Set to true to expose the affected pixels in the image.
-    var visibleResult   = options.hasOwnProperty('visibleResult')  ? options.visibleResult     : false;
+    var visibleResult  = options.hasOwnProperty('visibleResult')  ? options.visibleResult     : false;
 
     // Crush the message prior to encrypting?
-    var compress        = options.hasOwnProperty('compress')       ? options.compress          : true;
+    var compress       = options.hasOwnProperty('compress')       ? options.compress          : false;
 
     // Should the output image be scaled to a minimum-size needed to fit the message?
-    var rescaleCarrier  = options.hasOwnProperty('rescaleCarrier') ? options.rescaleCarrier    : true;
+    var rescaleCarrier = options.hasOwnProperty('rescaleCarrier') ? options.rescaleCarrier    : true;
 
     // If supplied, this function will be called when there is a result ready.
-    var callback        = options.hasOwnProperty('callback')       ? options.callback          : false;
+    var callback       = options.hasOwnProperty('callback')       ? options.callback          : false;
 
     // DEBUG OPTION    How noisy should this class be about what it's doing?
-    var verbosity       = options.hasOwnProperty('verbosity')      ? options.verbosity         : LOG_INFO;
-
-  /* These options apply to treatment of filenames for embedded files. */
-    // Encrypt only: If the user sets this to false, we will not store file information.
-    var store_filename  = options.hasOwnProperty('storeFilename')  ? options.storeFilename     : true;
+    var verbosity      = options.hasOwnProperty('verbosity')      ? options.verbosity         : LOG_INFO;
 
     // Decrypt only: Should we write an output file, if applicable? Ignored for encryption.
-    var write_file      = options.hasOwnProperty('writeFile')      ? options.writeFile         : true;
+    var write_file     = options.hasOwnProperty('writeFile')      ? options.writeFile         : true;
 
 
   /**************************************************************************
@@ -366,8 +362,9 @@ function Bury(carrier_path, password, options) {
     var __strides      = [];    // Count off the intervals between pixels.
     var __usablePixels = 0;     // How many pixels are we capable of using?
 
-  // Holds the filename if setMessage() is called with a path.
-  var __file_name_info  = false;
+  /* These parameters apply to treatment of filenames for embedded files. */
+  var __store_filename = false;
+  var __file_name_info = false; // Holds the filename if setMessage() is called with a path.
 
 
 
@@ -376,6 +373,13 @@ function Bury(carrier_path, password, options) {
     v = v ? v : LOG_DEBUG;
     if (v <= verbosity) console.log(body);
   };
+
+
+  /*
+  * Alrighty.... Let's setup crypto stuff...
+  */
+  var aes_cipher = new MCrypt.MCrypt('rijndael-128', 'cbc');
+
 
   /**
   * Call to shink the carrier to the minimum size required to store the bitstream.
@@ -397,7 +401,6 @@ function Bury(carrier_path, password, options) {
       required_pixels  += __strides[n++];
       bits  = bits - bpp;
     }
-    log_error('Need a total of ' + required_pixels + ' pixels to store the given message with given password.');
     log_error('Need a total of ' + required_pixels + ' pixels to store the given message with given password.');
 
     n  = Math.ceil(Math.sqrt(required_pixels / ratio));
@@ -536,7 +539,7 @@ function Bury(carrier_path, password, options) {
     var return_value  = true;
     var message_params  = 0x00;
 
-    if (store_filename) {
+    if (__store_filename) {
       if (__file_name_info.length != 32) {
         log_error('Filename was not 32 bytes. storing it generically...', LOG_WARNING);
         __file_name_info  = '                bad_filename.txt';
@@ -546,49 +549,39 @@ function Bury(carrier_path, password, options) {
 
     __plaintext = __plaintext.toString('binary');
 
+    var nu_iv      = aes_cipher.generateIv();
+
     var compressed = (compress) ? bzip2.compressBlock(__plaintext, __plaintext.length, 9) : __plaintext;
-
-    var cipherObj  = CryptoJS.AES.encrypt(
-      compressed.toString('binary'),
-      __key.toString('binary'),
-      { mode: CryptoJS.mode.CFB,
-        padding: CryptoJS.pad.ZeroPadding
-      }
-    );
-
-    var nu_iv = toByteArray(cipherObj.iv.words);
-    var encrypted = toByteArray(cipherObj.ciphertext.words);
-
-    //console.log(util.inspect(cipherObj.iv.words));
-    //console.log(util.inspect(nu_iv));
-    //console.log(util.inspect(toWordArray(nu_iv)));
+    aes_cipher.open(new Buffer(__key, 'binary'), nu_iv);
+    var encrypted  = aes_cipher.encrypt(new Buffer(compressed, 'binary'));
 
     var checksum  = toByteArray(CryptoJS.MD5(encrypted).words);
-    var message_params  = message_params | ((compress)       ? 0x01:0x00);
-        message_params  = message_params | ((store_filename) ? 0x04:0x00);
+    var message_params  = message_params | ((compress)         ? 0x01:0x00);
+        message_params  = message_params | ((__store_filename) ? 0x04:0x00);
 
-    var payload_length = (encrypted.length + nu_iv.length + checksum.length);
+    var payload_length = (encrypted.length + aes_cipher.getIvSize() + checksum.length);
     __ciphertext  = new Buffer(payload_length + HEADER_LENGTH, 'binary');
-    //console.log(JSON.stringify(__ciphertext, null, 3));
     if (binbuf.packTo('<HxBx', __ciphertext, 0, [VERSION_CODE, message_params])) {
       if (binbuf.packTo('>I',  __ciphertext, 5, [payload_length])) {
-        if (binbuf.packTo(nu_iv.length+'B', __ciphertext, HEADER_LENGTH, nu_iv.toString('binary'))) {
-          if (binbuf.packTo(encrypted.length+'B', __ciphertext, (HEADER_LENGTH+nu_iv.length), encrypted)) {
-            if (binbuf.packTo(checksum.length+'B', __ciphertext, payload_length-16, checksum)) {
-              log_error('Packed payload. Ready for modulation.', LOG_DEBUG);
-              __payload_size  = __ciphertext.length;  // Record the number of bytes to modulate.
-              if (compress) {
-                var pt_len    = __plaintext.length;
-                var comp_len  = compressed.length;
-                log_error('Compressed '+pt_len+' bytes into '+comp_len+'.', LOG_INFO);
-              }
-              if (store_filename) {
-                log_error('Prepended filename to plaintext: '+__file_name_info, LOG_INFO);
-              }
-              log_error('Encrypted payload with header is '+__payload_size+' bytes.', LOG_INFO);
-              return_value = true;
+        if (binbuf.packTo(aes_cipher.getIvSize()+'B', __ciphertext, HEADER_LENGTH, nu_iv)) {
+          log_error('nu_iv:     '+JSON.stringify(nu_iv)+'\n\n', LOG_DEBUG);
+          log_error('encrypted: '+JSON.stringify(encrypted)+'\n\n', LOG_DEBUG);
+          log_error('checksum:  '+JSON.stringify(new Buffer(checksum))+'\n\n', LOG_DEBUG);
+          var merged = Buffer.concat([encrypted, new Buffer(checksum)])
+          if (binbuf.packTo(merged.length+'B', __ciphertext, (HEADER_LENGTH+aes_cipher.getIvSize()), merged)) {
+            log_error('Packed payload. Ready for modulation.', LOG_INFO);
+            log_error('__ciphertext:  '+JSON.stringify(__ciphertext)+'\n\n', LOG_DEBUG);
+            __payload_size  = __ciphertext.length;  // Record the number of bytes to modulate.
+            if (compress) {
+              var pt_len    = __plaintext.length;
+              var comp_len  = compressed.length;
+              log_error('Compressed '+pt_len+' bytes into '+comp_len+'.', LOG_INFO);
             }
-            else log_error('Failed to pack checksum into payload.', LOG_ERR);
+            if (__store_filename) {
+              log_error('Prepended filename to plaintext: '+__file_name_info, LOG_INFO);
+            }
+            log_error('Encrypted payload with header is '+__payload_size+' bytes.', LOG_INFO);
+            return_value = true;
           }
           else log_error('Failed to pack ciphertext into payload.', LOG_ERR);
         }
@@ -721,24 +714,20 @@ function Bury(carrier_path, password, options) {
   */
   var decrypt = function() {
     var return_value  = true;
-    __iv_size  = 16;           // We need the size of the IV...
+    __iv_size  = aes_cipher.getIvSize();    // We need the size of the IV...
     var nu_iv  = __ciphertext.slice(0, __iv_size);
 
-    var ct     = __ciphertext.slice(__iv_size);
-    var decrypted     = CryptoJS.AES.decrypt(
-      ct.toString('binary'),
-      __key,
-      {iv: nu_iv}
-    );
-
-    //console.log(util.inspect(decrypted))
-
-    var decompressed  = (compress) ? bzip2.decompressFile(decrypted) : decrypted;
-    __file_name_info  = store_filename ? decompressed.slice(0, 32).toString('binary').trim() : '';
-    __plaintext       = store_filename ? decompressed.slice(32).toString('binary').trim() : decompressed.toString('binary').trim();
+    var ct     = __ciphertext.slice(__iv_size, __iv_size + __payload_size + HEADER_LENGTH);
+    aes_cipher.open(new Buffer(__key, 'binary'), new Buffer(nu_iv, 'binary'));
+    log_error('nu_iv:  '+JSON.stringify(nu_iv)+'\n\n', LOG_DEBUG);
+    log_error('ct:     '+JSON.stringify(ct)+'\n\n', LOG_DEBUG);
+    var decrypted    = aes_cipher.decrypt(new Buffer(ct, 'binary'), {iv: nu_iv});
+    var decompressed = (compress) ? bzip2.decompressFile(decrypted) : decrypted;
+    __file_name_info = __store_filename ? decompressed.slice(0, 32).toString('binary').trim() : '';
+    __plaintext      = __store_filename ? decompressed.slice(32).toString('binary').trim() : decompressed.toString('binary').trim();
 
     if (compress) log_error('Compression inflated '+decrypted.length+' bytes into '+decompressed.length+' bytes.', LOG_INFO);
-    if (store_filename) log_error('Retrieved file name: '+__file_name_info, LOG_INFO);
+    if (__store_filename) log_error('Retrieved file name: '+__file_name_info, LOG_INFO);
     return return_value;
   }
 
@@ -805,8 +794,8 @@ function Bury(carrier_path, password, options) {
     var msg_params = binbuf.unpack('<B', bytes, 3);
     __payload_size = binbuf.unpack('>I', bytes, 5);
 
-    compress        = (msg_params & 0x0001) ? true : false;
-    store_filename  = (msg_params & 0x0004) ? true : false;
+    compress         = (msg_params & 0x0001) ? true : false;
+    __store_filename = (msg_params & 0x0004) ? true : false;
     __ciphertext  = bytes.slice(HEADER_LENGTH);
     if (VERSION_CODE == ver) {
       log_error('Found a payload length of '+__payload_size+' bytes.');
@@ -818,6 +807,7 @@ function Bury(carrier_path, password, options) {
     }
   }
 
+
   /**
   * The last 16 bytes of the ciphertext will be a checksum for the encrypted message.
   *  The header has already been removed from the cipher text, so no need to tip-toe around it.
@@ -825,10 +815,10 @@ function Bury(carrier_path, password, options) {
   *  False otherwise.
   */
   var verify_checksum = function() {
-    var msg     = __ciphertext.slice(0, __payload_size-16);
-    var chksum  = __ciphertext.slice(__payload_size-16);
-    var hash    = CryptoJS.MD5(msg);
-    __ciphertext  = msg;
+    var msg      = __ciphertext.slice(0, __payload_size-16);
+    var chksum   = __ciphertext.slice(__payload_size-16);
+    var hash     = CryptoJS.MD5(msg);
+    __ciphertext = msg;
     return (!strncmp(chksum.toString(), hash.toString(), 32));
   }
 
@@ -840,12 +830,15 @@ function Bury(carrier_path, password, options) {
     var return_value  = false;
     if (message) {
       if (__plaintext.length == 0) {
-        if (fs.lstatSync(message).isFile()) {
+        if ((message.length < 256) && fs.existsSync(message) && fs.lstatSync(message).isFile()) {
+          // If the message is short, and there is a file extant when the message is treated
+          //   as a path, then we assume the caller intends us to use the contents of the file
+          //   as the message.
           log_error('Message looks like a path to a file.', LOG_INFO);
     //       if (is_readable(message)) {
             __plaintext  = fs.readFileSync(message);
-            if (store_filename) {
-              if (name_override) message  = name_override;    // Facilitates HTML forms.
+            if (__store_filename) {
+              if (name_override) message = name_override;    // Facilitates HTML forms.
 
               var base  = basename(message);
               __file_name_info  = normalize_filename(base);
@@ -861,7 +854,7 @@ function Bury(carrier_path, password, options) {
           var padded_len = Math.floor(message.length) + (message.length % 16) ? 16 : 0;
           message = pad(message, padded_len, ' ', STR_PAD_RIGHT).toString('binary');
           __plaintext  = new Buffer(message, 'binary');
-          store_filename  = false;    // No need for this.
+          __store_filename  = false;    // No need for this.
         }
         else log_error('Message must be either a path or a string.', LOG_ERR);
       }
@@ -871,7 +864,7 @@ function Bury(carrier_path, password, options) {
 
     // If we loaded a message successfully, try to encrypt it and fit it into the carrier.
     if (__plaintext.length > 0) {
-      __iv_size  = 16;    // We need the size of the IV...
+      __iv_size  = aes_cipher.getIvSize();    // We need the size of the IV...
       if (__iv_size) {
         if (encrypt()) {
           if (__payload_size <= __max_size) {
@@ -900,7 +893,7 @@ function Bury(carrier_path, password, options) {
     if (__image) {
       if (demodulate()) {
         if (decrypt()) {
-          if (store_filename) {
+          if (__store_filename) {
             if (write_file) {
               fs.writeFile(__file_name_info, __plaintext, 'utf8',
                 function(err) {

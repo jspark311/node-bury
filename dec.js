@@ -1,5 +1,10 @@
-var Bury = require('./mcrypt-bury.js');
+var Bury = require('./bury.js');
 
-// Decrypting
-var test_readback = new Bury('./test_carrier.png', 'saddroPs');
+// Decrypting requires no options aside from the password. Everything else
+//   is either derived, or buried in the header.
+var test_readback = new Bury('./test_output.png', 'saddroPs');
 console.log(test_readback.getMessage());
+
+// Alternatively, you can read the message into a local file
+console.log(test_readback.getMessage({write_file: true}));
+
