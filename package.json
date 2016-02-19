@@ -1,10 +1,11 @@
 {
   "name": "node-bury",
   "version": "1.0.0",
-  "description": "A steganographic and cryptographic library for nodejs.",
+  "description": "A cryptographic and steganographic image library for nodejs.",
   "main": "bury.js",
   "scripts": {
-    "start": "node index.js"
+    "enc": "node enc.js"
+    "enc": "node dec.js"
   },
   "keywords": [
     "Cryptography",
