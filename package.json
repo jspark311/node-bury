@@ -4,8 +4,8 @@
   "description": "A cryptographic and steganographic image library for nodejs.",
   "main": "bury.js",
   "scripts": {
-    "enc": "node enc.js"
-    "enc": "node dec.js"
+    "enc": "node enc.js",
+    "dec": "node dec.js"
   },
   "keywords": [
     "Cryptography",
