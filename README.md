@@ -1,4 +1,5 @@
-Bury
+#Bury
+A cryptographic and steganographic image library for nodejs.
 ========================
 
      ,ggggggggggg,   ,ggg,         gg  ,ggggggggggg,    ,ggg,         gg
