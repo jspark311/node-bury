@@ -560,7 +560,7 @@ function Bury(carrier_path, password, options) {
         message_params  = message_params | ((__store_filename) ? 0x04:0x00);
 
     var payload_length = (encrypted.length + aes_cipher.getIvSize() + checksum.length);
-    __ciphertext  = new Buffer(payload_length + HEADER_LENGTH, 'binary');
+    __ciphertext  = Buffer.alloc(payload_length + HEADER_LENGTH, 0, 'binary');
     if (binbuf.packTo('<HxBx', __ciphertext, 0, [VERSION_CODE, message_params])) {
       if (binbuf.packTo('>I',  __ciphertext, 5, [payload_length])) {
         if (binbuf.packTo(aes_cipher.getIvSize()+'B', __ciphertext, HEADER_LENGTH, nu_iv)) {

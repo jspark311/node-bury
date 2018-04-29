@@ -11,7 +11,8 @@ var options = {
 
 var test_image = new Bury('./test_carrier.jpg', 'saddroPs', options);
 
+console.log('This is bury ' + Bury.getVersion());
+
 // Encrypting a text message...
 test_image.setMessage('This is the worst green-text on the whole internet.');
-console.log(test_image.outputImage('./test_output.png'));
-
+test_image.outputImage('./test_output.png');
