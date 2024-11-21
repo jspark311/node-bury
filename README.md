@@ -33,6 +33,41 @@ Comments and issues posted on github will be answered. Pull-requests are always 
 
 ### Installation
 
+node-bury depends on node-gd so you will need a few build tools available before installing
+    
+### On Debian/Ubuntu
+
+```bash
+$ sudo apt-get install libgd2-dev # libgd
+$ npm install node-gd
+```
+
+### On RHEL/CentOS
+
+```bash
+$ sudo yum install gd-devel
+$ npm install node-gd
+```
+
+### On Mac OS/X
+
+Using Homebrew
+
+```bash
+$ brew install pkg-config gd
+$ npm install node-gd
+```
+
+...or using MacPorts
+
+```bash
+$ sudo port install pkgconfig gd2
+$ npm install node-gd
+```
+
+
+Then you can install with the following:
+
     git clone https://github.com/jspark311/node-bury.git
     cd node-bury
     npm install bury
